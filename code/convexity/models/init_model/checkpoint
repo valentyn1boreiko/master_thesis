@@ -1,2 +1,2 @@
-model_checkpoint_path: "mnist_maxout-0"
-all_model_checkpoint_paths: "mnist_maxout-0"
+model_checkpoint_path: "mnist_MAXOUT_CE_ADVERSARIAL_DROPOUT-0"
+all_model_checkpoint_paths: "mnist_MAXOUT_CE_ADVERSARIAL_DROPOUT-0"
