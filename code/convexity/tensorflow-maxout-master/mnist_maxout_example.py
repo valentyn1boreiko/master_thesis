@@ -97,7 +97,7 @@ def cnn():
 
 
 def usage_type():
-    usage_ = 'Usage: python mnist_maxout_example.py (LINEAR|RELU|MAXOUT) (TRAIN|LOAD) (CE|CE_adversarial) (Y|N)'
+    usage_ = 'Usage: python3 mnist_maxout_example.py (LINEAR|RELU|MAXOUT) (TRAIN|LOAD) (CE|CE_adversarial) (Y|N)'
     assert len(sys.argv) == 5 or (len(sys.argv) == 2 and sys.argv[1].upper() == 'CNN'), usage_
 
     t = sys.argv[1].upper()
@@ -165,6 +165,7 @@ if use_cnn:
 else:
     with tf.name_scope('Model'):
         # Model
+        print(params)
         W1, b1, W2, b2, pred = params
     with tf.name_scope('Loss'):
         # Minimize error using cross entropy
