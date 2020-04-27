@@ -83,6 +83,7 @@ def cubic_loss(w, H, g, M, scale=1):
     """
     return w @ g + 0.5 * H @ w @ w + scale * M / 6 * la.norm(w) ** 3
 
+
 def cubic_gradient(w, H, g, M, scale=1):
     """
     Gradient of quadratic with cubic regularization.
