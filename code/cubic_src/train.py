@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import dataloader
 from torchvision import transforms
 from torchvision.datasets import CIFAR10
+from pytorch_optmizers import SRC
 import numpy as np
 import copy
 
@@ -21,14 +22,14 @@ test = CIFAR10('../2nd-order/data/', train=False, download=True, transform=trans
     transforms.ToTensor(),  # ToTensor does min-max normalization.
 ]), )
 
-dataloader_args = dict(shuffle=True, batch_size=256, num_workers=4)
-train_loader = dataloader.DataLoader(train, **dataloader_args)
-test_loader = dataloader.DataLoader(test, **dataloader_args)
-
 model = resnet20_cifar()
-optimizer = SGD(model.parameters(), lr=1e-1, weight_decay=5e-4, momentum=0.9)
+optimizer = SRC(model.parameters())
 scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
 loss_fn = CrossEntropyLoss()
+
+dataloader_args = dict(shuffle=True, batch_size=optimizer.defaults['sample_size_gradient'], num_workers=4)
+train_loader = dataloader.DataLoader(train, **dataloader_args)
+test_loader = dataloader.DataLoader(test, **dataloader_args)
 
 if torch.cuda.is_available():
     dev = 'cuda'
@@ -39,26 +40,34 @@ else:
 
 def get_accuracy(model, dev, loss_fn, loader):
     model.eval()
-    correct = 0
-    total = 0
-    loss = 0
-    for batch_idx, (data, target) in enumerate(loader):
+    correct_, total_, loss_ = (0, 0, 0)
+
+    for batch_idx_, (data_, target_) in enumerate(loader):
         # Get Samples
-        data = data.to(dev)
-        target = target.to(dev)
-        outputs = model(data)
-        loss += loss_fn(outputs, target).detach() * len(target)
+        data_ = data_.to(dev)
+        target_ = target_.to(dev)
+        outputs = model(data_)
+        loss_ += loss_fn(outputs, target_).detach() * len(target_)
         # Get prediction
         _, predicted = torch.max(outputs.data, 1)
         # Total number of labels
-        total += len(target)
+        total_ += len(target_)
         # Total correct predictions
-        correct += (predicted == target).sum().detach()
+        correct_ += (predicted == target_).sum().detach()
         del outputs
         del predicted
-    acc = 100 * correct.item() / total
-    loss = loss / total
-    return loss.item(), acc
+    acc = 100 * correct_.item() / total_
+    loss_ = loss_ / total_
+    return loss_.item(), acc
 
 
 last_model = copy.deepcopy(model)
+
+# We have T_out iterations
+for epoch in range(optimizer.defaults['n_iterations']):
+    # Set modules in the the network to train mode
+    model.train()
+    correct, total, loss = (0, 0, 0)
+    for batch_idx, (data, target) in enumerate(train_loader):
+        optimizer.zero_grad()
+        loss_fn(model(data), target).backward(create_graph=True)

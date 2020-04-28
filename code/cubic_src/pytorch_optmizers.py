@@ -6,19 +6,20 @@ class SRC(Optimizer):
     def __init__(self, params, adaptive_rho=True, subproblem_solver='adaptive',
                  batchsize_mode='fixed', opt=None):
 
-        defaults = dict(grad_tol=opt.get('grad_tol', 1e-6),
-                        adaptive_rho=adaptive_rho,
-                        subproblem_solver=subproblem_solver,
-                        batchsize_mode=batchsize_mode,
-                        sample_size_Hessian=opt.get('sample_size_Hessian', 10),
-                        sample_size_gradient=opt.get('sample_size_gradient', 100),
-                        eta_1=opt.get('success_treshold', 0.1),
-                        eta_2=opt.get('very_success_treshold', 0.9),
-                        gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
-                        sigma=opt.get('initial_penalty_parameter', 1.),
-                        n_iterations=opt.get('n_iterations', 100)
-                        )
-        super(SRC, self).__init__(params, defaults)
+        self.defaults = dict(grad_tol=opt.get('grad_tol', 1e-6),
+                             adaptive_rho=adaptive_rho,
+                             subproblem_solver=subproblem_solver,
+                             batchsize_mode=batchsize_mode,
+                             sample_size_Hessian=opt.get('sample_size_Hessian', 10),
+                             sample_size_gradient=opt.get('sample_size_gradient', 100),
+                             eta_1=opt.get('success_treshold', 0.1),
+                             eta_2=opt.get('very_success_treshold', 0.9),
+                             gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
+                             sigma=opt.get('initial_penalty_parameter', 1.),
+                             n_iterations=opt.get('n_iterations', 100)
+                             )
+
+        super(SRC, self).__init__(params, self.defaults)
 
     def __setstate__(self, state):
         super(SRC, self).__setstate__(state)
@@ -38,6 +39,7 @@ class SRC(Optimizer):
             for p in group['params']:
                 if p.grad is None:
                     continue
+                p.grad.data.add_
                 # average gradients or use the weighted sampling
 
                 # calculate Hessian explicitly and
