@@ -2,7 +2,6 @@ import copy
 from utils import print_acc
 from config import *
 
-
 last_model = copy.deepcopy(model)
 
 dataloader_iterator = iter(train_loader)

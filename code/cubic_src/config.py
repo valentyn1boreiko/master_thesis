@@ -4,9 +4,9 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import dataloader
 from torchvision import transforms
 from torchvision.datasets import CIFAR10
-from pytorch_optmizers import SRC
+import pytorch_optmizers
 from resnet_cifar import resnet20_cifar
-from utils import init_train_loader
+
 
 # Loading the data
 train = CIFAR10('../2nd-order/data/', train=True, download=True, transform=transforms.Compose([
@@ -24,10 +24,9 @@ test = CIFAR10('../2nd-order/data/', train=False, download=True, transform=trans
 
 # Loading the model
 model = resnet20_cifar()
-optimizer = SRC(model.parameters())
-scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
+optimizer = pytorch_optmizers.SRC(model.parameters())
+#scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
 loss_fn = CrossEntropyLoss()
-
 
 # Detecting device
 if torch.cuda.is_available():
@@ -39,11 +38,20 @@ else:
 # Sampling schemes
 exp_growth_constant_grad = ((1-optimizer.defaults['sample_size_gradient'])*n)**(1/optimizer.defaults['n_iterations'])
 
-sampling_scheme = dict(fixed=n * optimizer.defaults['sample_size_gradient'],
-                       exponential=lambda iter_: min(n, n * optimizer.defaults['sample_size_gradient'] +
-                                                     exp_growth_constant_grad**(iter_ + 1)))
+sampling_scheme = dict(fixed=int(n * optimizer.defaults['sample_size_gradient']),
+                       exponential=lambda iter_: int(
+                           min(n, n * optimizer.defaults['sample_size_gradient'] +
+                               exp_growth_constant_grad**(iter_ + 1))
+                       )
+                       )
+
+
+def init_train_loader(dataloader, train, sampling_scheme_name='fixed'):
+    dataloader_args = dict(shuffle=True, batch_size=sampling_scheme[sampling_scheme_name], num_workers=4)
+    train_loader = dataloader.DataLoader(train, **dataloader_args)
+    return dataloader_args, train_loader
+
 
 # Init train loader
-
 dataloader_args, train_loader = init_train_loader(dataloader, train)
 test_loader = dataloader.DataLoader(test, **dataloader_args)
