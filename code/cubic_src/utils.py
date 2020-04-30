@@ -186,9 +186,9 @@ class SRCutils(Optimizer):
                (self.defaults['sigma'] / 2) * delta_.norm(p=2) * delta_
 
     def m_delta(self, delta):
-        return self.grad.t() @ delta + \
-               0.5 * self.hessian_vector_product(delta) + \
-               self.defaults['sigma'] / 6 * np.linalg.norm(delta, 2)
+        return self.grad.t().detach().numpy() @ delta.detach().numpy() + \
+               0.5 * self.hessian_vector_product(delta).detach().numpy() + \
+               self.defaults['sigma'] / 6 * np.linalg.norm(delta.detach().numpy(), 2)
 
     def beta_adapt(self, f_grad_new, x):
         return (f_grad_new - self.grad).norm(p=2) \
@@ -286,7 +286,7 @@ class SRCutils(Optimizer):
         return delta
 
     def model_update(self, delta, delta_m):
-        previous_f = self.model(self.param_groups[0]['params'].data)
+        previous_f = self.model(flatten_tensor_list(self.params))
         current_f = self.param_groups[0]['params'].data + delta
 
         function_decrease = previous_f - current_f
@@ -298,7 +298,8 @@ class SRCutils(Optimizer):
         # Update x if step delta is successful
         if rho >= self.defaults['eta_1']:
             # We assume only one group for now
-            self.param_groups[0]['params'].data.add_(delta)
+            # ToDo: add updates for each parameter separately
+            flatten_tensor_list(self.params).add_(delta)
 
         # Update the penalty parameter rho (in the code it's sigma) if adaptive_rho = True.
         # It is so by default
