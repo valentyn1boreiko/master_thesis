@@ -71,7 +71,7 @@ def hessian_vector_product(gradsH, params, v):
     """
     end3 = time.time()
     hv = torch.autograd.grad(gradsH, params, grad_outputs=v,
-                             only_inputs=True, retain_graph = True)
+                             only_inputs=True, retain_graph=True)
     print('hess vec product time: ', time.time() - end3)
 
     return flatten_tensor_list(hv)

@@ -20,6 +20,7 @@ for epoch in range(optimizer.defaults['n_iterations']):
     optimizer.zero_grad()
     loss_fn(model(data), target).backward(create_graph=True)
 
+    optimizer.defaults['target'] = target
     optimizer.step()
     print_acc(train_loader, epoch)
 

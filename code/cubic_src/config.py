@@ -24,7 +24,7 @@ test = CIFAR10('../2nd-order/data/', train=False, download=True, transform=trans
 
 # Loading the model
 model = resnet20_cifar()
-optimizer = pytorch_optmizers.SRC(model.parameters())
+optimizer = pytorch_optmizers.SRC(model.parameters(), model, loss_fn)
 #scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
 loss_fn = CrossEntropyLoss()
 
