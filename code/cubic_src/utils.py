@@ -20,6 +20,16 @@ def flatten_tensor_list(tensors):
     return torch.cat(flattened, 0)
 
 
+def unflatten_tensor_list(tensor, params):
+    unflattened = []
+    step = 0
+    for param in params:
+        n = param.reshape(-1).size()[0]
+        unflattened.append(tensor[step: step + n].reshape(param.size()))
+        step += n
+    return unflattened
+
+
 def tridiag(a, b, c, k1=-1, k2=0, k3=1):
     return torch.diag(a, k1) + torch.diag(b, k2) + torch.diag(c, k3)
 
@@ -45,8 +55,8 @@ class SRCutils(Optimizer):
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=subproblem_solver,
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.001),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.01),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.005),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.05),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
@@ -90,7 +100,7 @@ class SRCutils(Optimizer):
     def cauchy_point(self, grads_norm):
         # Compute Cauchy radius
         # ToDo: replace hessian-vec product with the upper bound (beta)
-        product = self.hessian_vector_product(self.grad).t() @ self.grads / (self.defaults['sigma'] * grads_norm ** 2)
+        product = self.hessian_vector_product(self.grad).t() @ self.grad / (self.defaults['sigma'] * grads_norm ** 2)
         R_c = -product + torch.sqrt(product ** 2 + 2 * grads_norm / self.defaults['sigma'])
         delta = -R_c * self.grad / grads_norm
         return delta
@@ -154,7 +164,7 @@ class SRCutils(Optimizer):
                 q = Hv / b
             eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
 
-            return max(eigs)
+            return max(abs(eigs))
 
     def get_hessian_eigen(self, **kwargs):
         H_bmm = lambda x: self.hessian_vector_product(x)
@@ -173,44 +183,60 @@ class SRCutils(Optimizer):
             grads.append(param.grad + 0.)
         return flatten_tensor_list(grads), params
 
+    def update_params(self, delta, inplace=True):
+        param_deltas = unflatten_tensor_list(delta, self.params)
+        assert (len(param_deltas) == len(self.params)), 'unflattened array is of a wrong size'
+        if not inplace:
+            temp_params = self.params
+        for i, param in enumerate(self.param_groups[0]['params']):
+            if inplace:
+                param.data.add_(param_deltas[i])
+            else:
+                temp_params[i].data.add_(param_deltas[i])
+
+        if not inplace:
+            return temp_params
+
     def m(self, g_, x):
         delta_ = x - flatten_tensor_list(self.params)
         return g_.t() @ delta_ + \
-               0.5 * self.hessian_vector_product(delta_) @ delta_ + \
+               0.5 * self.hessian_vector_product(delta_).t() @ delta_ + \
                (self.defaults['sigma'] / 6) * delta_.norm(p=2) ** 3
 
-    def m_grad(self, g_, x):
-        delta_ = x - flatten_tensor_list(self.params)
+    def m_grad(self, g_, delta_):
         return g_ + \
                self.hessian_vector_product(delta_) + \
                (self.defaults['sigma'] / 2) * delta_.norm(p=2) * delta_
 
     def m_delta(self, delta):
-        return self.grad.t().detach().numpy() @ delta.detach().numpy() + \
-               0.5 * self.hessian_vector_product(delta).detach().numpy() + \
-               self.defaults['sigma'] / 6 * np.linalg.norm(delta.detach().numpy(), 2)
+        return self.grad.t() @ delta + \
+               0.5 * self.hessian_vector_product(delta).t() @ delta + \
+               self.defaults['sigma'] / 6 * delta.norm(p=2)
 
-    def beta_adapt(self, f_grad_new, x):
-        return (f_grad_new - self.grad).norm(p=2) \
-               / (x - flatten_tensor_list(self.params)).norm(p=2)
+    def beta_adapt(self, f_grad_delta, delta_):
+        return (f_grad_delta).norm(p=2) \
+               / (delta_).norm(p=2)
 
     def cubic_subsolver(self):
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim = ', self.grad.size())
-        beta = self.get_hessian_eigen()
+        beta = np.sqrt(self.get_hessian_eigen())
         print('hessian eigenvalue is calculated', beta)
+        print(self.grad)
         grad_norm = self.grad.norm(p=2)
         print('grad norm ', grad_norm.detach().numpy(), beta ** 2 / self.defaults['sigma'])
 
-        if grad_norm.detach().numpy() >= beta ** 2 / self.defaults['sigma']:
+        eps_ = 0.5
+        r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
+        # ToDo: Check this constant (now beta ** 2 is changed to beta)
+        if grad_norm.detach().numpy() >= beta / self.defaults['sigma']:
             # Get the Cauchy point
             delta = self.cauchy_point(grad_norm)
         else:
             # Constants from the paper
             # GRADIENT DESCENT FINDS THE CUBIC-REGULARIZED NONCONVEX NEWTON STEP,
             # Carmon & Duchi, 2019
-            r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
-            eps_ = 0.5
+
             # ToDo: scale sigma with 1/2
             delta = torch.zeros(self.grad.size())
             sigma_ = (self.defaults['sigma'] ** 2 * r ** 3 * eps_) / (144 * (beta + 2 * self.defaults['sigma'] * r))
@@ -218,38 +244,60 @@ class SRCutils(Optimizer):
 
             print('generating sphere random sample, dim = ', self.grad.size()[0])
             unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
-            g_ = self.grad + unif_sphere
+            g_ = self.m_grad(self.grad, delta) + unif_sphere
             print('sphere random sample is generated')
             T_eps = int(beta / (np.sqrt(self.defaults['sigma'] * self.defaults['grad_tol'])))
             if self.defaults['subproblem_solver'] == 'adaptive':
                 # We know Lipschitz constant
                 lambda_ = 1 / beta
+                #lambda_ = 1
                 theta = np.infty
-                x = flatten_tensor_list(self.params) - lambda_ * self.grad
+                f_grad_old = self.m_grad(g_, delta)
+                delta_old = delta
+                delta = delta - lambda_ * f_grad_old
+
 
             print('Run iterations, cubic subsolver')
             # ToDo: too many iterations
+
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
                 if self.defaults['subproblem_solver'] == 'adaptive':
                     # Update Lipschitz constant
-                    f_grad_new = self.m_grad(g_, x)
-                    beta = self.beta_adapt(f_grad_new, x)
+
                     # Update lambda
                     lambda_old = lambda_
-                    lambda_ = min(np.sqrt(1 + theta) * lambda_, 1 / (lambda_ * beta.detach().numpy()**2))
-                    delta -= lambda_ * f_grad_new
-                    x -= lambda_ * f_grad_new
-                    theta = lambda_ / lambda_old
+                    f_grad_new = self.m_grad(g_, delta)
+                    f_grad_delta = f_grad_new - f_grad_old
+                    f_grad_old = f_grad_new
+                    #beta_k = self.beta_adapt(f_grad_delta, delta - delta_old).detach().numpy()
+                    #lambda_ = min(np.sqrt(1 + theta) * lambda_, 1 / (lambda_ * beta**2) + 1 / (2 * beta_k**2))
+                    #print('params ', beta_k, (delta - delta_old).norm(p=2))
+                    #print('deltas ', delta, delta_old, f_grad_delta)
+                    lambda_ = min(np.sqrt(1 + theta) * lambda_, (delta - delta_old).norm(p=2).detach().numpy() /
+                                 (2 * f_grad_delta.norm(p=2).detach().numpy()))
+                    delta_old = delta
+
+                    #print('lambdas ', lambda_old, lambda_)
+                    delta = delta - lambda_ * f_grad_new
+                    print('lambdas ', lambda_, lambda_old, (delta - delta_old).norm(p=2))
+                    if (delta - delta_old).norm(p=2) < 1e-4:
+                        print('no improvement anymore')
+                        break
+                    theta = lambda_ / (lambda_old + 1e-5)
+                    print('delta_m = ', self.m_delta(delta))
                 else:
                     delta -= eta * (
                             g_ +
                             self.hessian_vector_product(delta) +
-                            (self.defaults['sigma'] / 2) * np.linalg.norm(delta, 2)
+                            (self.defaults['sigma'] / 2) * delta.norm(p=2) * delta
                     )
+                    print('delta_m = ', self.m_delta(delta))
+
         return delta, self.m_delta(delta)
 
     def cubic_final_subsolver(self):
+
         self.grad, self.params = self.get_grads_and_params()
         beta = self.get_hessian_eigen()
 
@@ -276,7 +324,8 @@ class SRCutils(Optimizer):
                 lambda_ = min(np.sqrt(1 + theta) * lambda_, 1 / (lambda_ * beta.detach().numpy() ** 2))
                 delta -= lambda_ * f_grad_new
                 x -= lambda_ * f_grad_new
-                theta = lambda_ / lambda_old
+                print('lambdas ', lambda_, lambda_old)
+                theta = lambda_ / (lambda_old + 1e-5)
             else:
                 delta -= eta * g_m
                 g_m = self.grad + \
@@ -286,20 +335,30 @@ class SRCutils(Optimizer):
         return delta
 
     def model_update(self, delta, delta_m):
-        previous_f = self.model(flatten_tensor_list(self.params))
-        current_f = self.param_groups[0]['params'].data + delta
+
+        previous_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
+        previous_f_ = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
+        self.update_params(delta)
+        current_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
+        print('prev f', previous_f, previous_f_)
+        print('curr f', current_f)
+        #quit()
 
         function_decrease = previous_f - current_f
         model_decrease = -delta_m
 
+        print(function_decrease, model_decrease)
         rho = function_decrease / model_decrease
+        print('rho =', rho)
         assert (model_decrease >= 0), 'negative model decrease. This should not have happened'
 
         # Update x if step delta is successful
         if rho >= self.defaults['eta_1']:
             # We assume only one group for now
-            # ToDo: add updates for each parameter separately
-            flatten_tensor_list(self.params).add_(delta)
+            print('successful iteration')
+            #self.update_params(delta)
+        else:
+            self.update_params(-delta)
 
         # Update the penalty parameter rho (in the code it's sigma) if adaptive_rho = True.
         # It is so by default

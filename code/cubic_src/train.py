@@ -20,7 +20,8 @@ for epoch in range(optimizer.defaults['n_iterations']):
 
     optimizer.zero_grad()
     loss_fn(model(data), target).backward(create_graph=True)
-
+    optimizer.defaults['train_data'] = data
+    optimizer.defaults['target'] = target
     optimizer.defaults['dataloader_iterator_hess'] = dataloader_iterator_hess
 
     optimizer.step()
