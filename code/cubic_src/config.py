@@ -78,6 +78,8 @@ optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
 
 
 optimizer.defaults['dev'] = dev
+# ToDo: can we do so? (We increase the sample size if case 1 is not satisfied)
+optimizer.defaults['double_sample_size'] = False
 # Sampling schemes
 exp_growth_constant_grad = ((1-optimizer.defaults['sample_size_gradient'])*n)**(1/optimizer.defaults['n_iterations'])
 

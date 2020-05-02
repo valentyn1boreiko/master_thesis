@@ -11,6 +11,14 @@ for epoch in range(optimizer.defaults['n_iterations']):
     print('epoch ', epoch)
     model.train()
 
+    # ToDo: can we do so? (We increase the sample size if case 1 is not satisfied)
+    if optimizer.defaults['double_sample_size']:
+        optimizer.defaults['double_sample_size'] = False
+        optimizer.defaults['sample_size_gradient'] *= 2
+        optimizer.defaults['sample_size_hessian'] *= 2
+        _, train_loader = init_train_loader(dataloader, train)
+        dataloader_iterator = iter(train_loader)
+
     # Sample g_t uniformly at random
     try:
         data, target = next(dataloader_iterator)

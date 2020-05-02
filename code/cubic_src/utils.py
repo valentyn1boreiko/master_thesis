@@ -49,6 +49,7 @@ class SRCutils(Optimizer):
 
         self.model = opt['model']
         self.loss_fn = opt['loss_fn']
+        self.case_n = 1
         self.grad, self.params = None, None
 
         self.defaults = dict(grad_tol=opt.get('grad_tol', 1e-2),
@@ -229,10 +230,12 @@ class SRCutils(Optimizer):
         eps_ = 0.5
         r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
         # ToDo: Check this constant (now beta ** 2 is changed to beta)
-        if grad_norm.detach().numpy() >= beta / self.defaults['sigma']:
+        if grad_norm.detach().numpy() >= beta ** 2 / self.defaults['sigma']:
+            self.case_n = 1
             # Get the Cauchy point
             delta = self.cauchy_point(grad_norm)
         else:
+            self.case_n = 2
             # Constants from the paper
             # GRADIENT DESCENT FINDS THE CUBIC-REGULARIZED NONCONVEX NEWTON STEP,
             # Carmon & Duchi, 2019
@@ -342,20 +345,30 @@ class SRCutils(Optimizer):
         current_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
         print('prev f', previous_f, previous_f_)
         print('curr f', current_f)
-        #quit()
 
         function_decrease = previous_f - current_f
         model_decrease = -delta_m
 
         print(function_decrease, model_decrease)
-        rho = function_decrease / model_decrease
+        # ToDo: it is originally without abs
+        rho = function_decrease / abs(model_decrease)
         print('rho =', rho)
-        assert (model_decrease >= 0), 'negative model decrease. This should not have happened'
+
+        #assert (model_decrease >= 0), 'negative model decrease. This should not have happened'
+        if self.case_n == 1:
+            print('Case 1', delta_m, -function_decrease, -np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
+            if max(delta_m, -function_decrease) <= \
+                   -np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
+                'Case 1 is not satisfied!'
+                self.defaults['double_sample_size'] = True
+
+
+
 
         # Update x if step delta is successful
         if rho >= self.defaults['eta_1']:
             # We assume only one group for now
-            print('successful iteration')
+            print('Successful iteration', self.defaults['sigma'])
             #self.update_params(delta)
         else:
             self.update_params(-delta)
@@ -367,11 +380,11 @@ class SRCutils(Optimizer):
             if rho >= self.defaults['eta_2']:
                 self.defaults['sigma'] = max(self.defaults['sigma'] / self.defaults['gamma'], 1e-16)
                 # alternative (Cartis et al. 2011): sigma = max(min(grad_norm,sigma), np.nextafter(0,1))
-                print('Very successful iteration')
+                print('Very successful iteration', self.defaults['sigma'])
 
             elif rho < self.defaults['eta_1']:
                 self.defaults['sigma'] = self.defaults['sigma'] * self.defaults['gamma']
-                print('Unsuccessful iteration')
+                print('Unsuccessful iteration', self.defaults['sigma'])
 
     def hessian_vector_product(self, v):
         """
