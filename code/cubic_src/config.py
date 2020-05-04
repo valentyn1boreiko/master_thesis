@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import nn, optim
 from resnet_cifar import resnet20_cifar
 
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -69,7 +70,9 @@ else:
 model = Net().to(dev)
 
 opt = dict(model=model,
-           loss_fn=loss_fn)
+           loss_fn=loss_fn,
+           n=n,
+           log_interval=10)
 
 optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
 #scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
@@ -81,23 +84,26 @@ optimizer.defaults['dev'] = dev
 # ToDo: can we do so? (We increase the sample size if case 1 is not satisfied)
 optimizer.defaults['double_sample_size'] = False
 # Sampling schemes
-exp_growth_constant_grad = ((1-optimizer.defaults['sample_size_gradient'])*n)**(1/optimizer.defaults['n_iterations'])
+#exp_growth_constant_grad = ((1-optimizer.defaults['sample_size_gradient'])*n)**(1/optimizer.defaults['n_iterations'])
 
 sampling_scheme = dict(fixed_grad=int(n * optimizer.defaults['sample_size_gradient']),
-                       exponential_grad=lambda iter_: int(
-                           min(n, n * optimizer.defaults['sample_size_gradient'] +
-                               exp_growth_constant_grad**(iter_ + 1))),
+
+                       #exponential_grad=lambda iter_: int(
+                       #    min(n, n * optimizer.defaults['sample_size_gradient'] +
+                       #        exp_growth_constant_grad**(iter_ + 1))),
                        fixed_hess=int(n * optimizer.defaults['sample_size_hessian']),
-                       exponential_hess=lambda iter_: int(
-                           min(n, n * optimizer.defaults['sample_size_hessian'] +
-                               exp_growth_constant_grad**(iter_ + 1))),
+                       #exponential_hess=lambda iter_: int(
+                       #    min(n, n * optimizer.defaults['sample_size_hessian'] +
+                       #        exp_growth_constant_grad**(iter_ + 1))),
                        )
 
 
-def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad'):
-    print('Loaded ', sampling_scheme[sampling_scheme_name], 'data points')
-    dataloader_args = dict(shuffle=True, batch_size=sampling_scheme[sampling_scheme_name], num_workers=4)
+def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_points_=None):
+    n_points = n_points_ if n_points_ else sampling_scheme[sampling_scheme_name]
+    print('Loaded ', n_points, 'data points')
+    dataloader_args = dict(shuffle=True, batch_size=n_points, num_workers=4)
     train_loader = dataloader_.DataLoader(train_, **dataloader_args)
+    dataloader_args['batch_size'] = 1000
     return dataloader_args, train_loader
 
 

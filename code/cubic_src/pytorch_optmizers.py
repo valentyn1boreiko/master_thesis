@@ -24,10 +24,11 @@ class SRC(utils.SRCutils):
 
         print('Model update')
         self.model_update(delta, delta_m)
-
+        self.gradient_samples_seen[-1] += self.defaults['train_data'].size(0)
         # Check if we are doing enough progress
         print('final accuracy ', -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
-        if delta_m >= -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
+        # ToDo: check if condition delta_m <= 0 is required
+        if 0 >= delta_m >= -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
             print('do cubic final subsolver')
             delta = self.cubic_final_subsolver()
             self.param_groups[0]['params'].data.add_(delta)

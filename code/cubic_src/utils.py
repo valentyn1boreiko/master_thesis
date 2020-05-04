@@ -3,6 +3,7 @@ import time
 import numpy as np
 import scipy.linalg as la
 from torch.optim.optimizer import Optimizer
+import matplotlib.pyplot as plt
 import config
 
 
@@ -50,20 +51,26 @@ class SRCutils(Optimizer):
         self.model = opt['model']
         self.loss_fn = opt['loss_fn']
         self.case_n = 1
+        self.n = opt['n']
         self.grad, self.params = None, None
+        self.gradient_samples_seen = [0]
+        self.test_losses = []
+        self.step_old = None
+
 
         self.defaults = dict(grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=subproblem_solver,
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.005),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.05),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.0001),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.001),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
-                             sigma=opt.get('initial_penalty_parameter', 1.),
-                             n_iterations=opt.get('n_iterations', 100),
-                             target=None
+                             sigma=opt.get('initial_penalty_parameter', 16.),
+                             n_epochs=opt.get('n_epochs', 14),
+                             target=None,
+                             log_interval=opt.get('log_interval', 1)
                              )
         super(SRCutils, self).__init__(params, self.defaults)
 
@@ -87,16 +94,29 @@ class SRCutils(Optimizer):
             del predicted
         acc = 100 * correct / total
         loss = loss / total
+        print("All points {}".format(total))
         return loss, acc
 
-    def print_acc(self, train_loader, epoch):
-        train_loss, train_acc = self.get_accuracy(train_loader)
-        test_loss, test_acc = self.get_accuracy(config.test_loader)
-        print(
-            "Epoch {} Train Loss: {:.4f} Accuracy :{:.4f} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch, train_loss,
-                                                                                                     train_acc,
-                                                                                                     test_loss,
-                                                                                                     test_acc))
+    def print_acc(self, train_loader, epoch, batch_idx):
+        #train_loss, train_acc = self.get_accuracy(train_loader)
+        #print(
+        #    "Epoch {} Train Loss: {:.4f} Accuracy :{:.4f} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch, train_loss,
+        #                                                                                             train_acc,
+        #                                                                                             test_loss,
+        #                                                                                             test_acc))
+
+        if batch_idx % self.defaults['log_interval'] == 0:
+            test_loss, test_acc = self.get_accuracy(config.test_loader)
+
+            print(
+                "Epoch {} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch,
+                                                                     test_loss,
+                                                                     test_acc))
+            self.test_losses.append(test_loss)
+            plt.plot(self.gradient_samples_seen, self.test_losses)
+            plt.savefig('fig/loss_src.png')
+            print('idx ', batch_idx, self.test_losses, self.gradient_samples_seen)
+            self.gradient_samples_seen.append(self.gradient_samples_seen[-1])
 
     def cauchy_point(self, grads_norm):
         # Compute Cauchy radius
@@ -230,6 +250,7 @@ class SRCutils(Optimizer):
         eps_ = 0.5
         r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
         # ToDo: Check this constant (now beta ** 2 is changed to beta)
+
         if grad_norm.detach().numpy() >= beta ** 2 / self.defaults['sigma']:
             self.case_n = 1
             # Get the Cauchy point
@@ -282,13 +303,19 @@ class SRCutils(Optimizer):
                     delta_old = delta
 
                     #print('lambdas ', lambda_old, lambda_)
+                    old_delta = delta
                     delta = delta - lambda_ * f_grad_new
                     print('lambdas ', lambda_, lambda_old, (delta - delta_old).norm(p=2))
-                    if (delta - delta_old).norm(p=2) < 1e-4:
+                    if (delta - delta_old).norm(p=2) < 1e-3:
                         print('no improvement anymore')
                         break
                     theta = lambda_ / (lambda_old + 1e-5)
                     print('delta_m = ', self.m_delta(delta))
+                    # Empirical rule
+                    if abs(self.m_delta(delta)) > abs(self.test_losses[0]) and i > 2:
+                        print('delta_m has been increasing too much')
+                        return delta, self.m_delta(delta)
+
                 else:
                     delta -= eta * (
                             g_ +
@@ -341,10 +368,35 @@ class SRCutils(Optimizer):
 
         previous_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
         previous_f_ = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
+        params_old = flatten_tensor_list(self.get_grads_and_params()[1])
+        momentum_const = 0.9
         self.update_params(delta)
+
         current_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
         print('prev f', previous_f, previous_f_)
         print('curr f', current_f)
+
+        if self.step_old is not None and current_f < previous_f:
+            grad_new, params_new = self.get_grads_and_params()
+            params_new = flatten_tensor_list(params_new)
+            momentum_stepsize = min(momentum_const, grad_new.norm(p=2), delta.norm(p=2))
+            print('momentum stepsize', momentum_stepsize)
+            y_new = flatten_tensor_list(params_new)
+            v_new = y_new + momentum_stepsize * (y_new - self.step_old)
+            print('params before ', flatten_tensor_list(self.get_grads_and_params()[1]))
+            self.update_params(-params_new)
+            print('params 0 ', flatten_tensor_list(self.get_grads_and_params()[1]))
+            self.update_params(v_new)
+            print('params mid ', flatten_tensor_list(self.get_grads_and_params()[1]))
+            v_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
+            print('v f', v_f)
+            if v_f < current_f:
+                current_f = v_f
+                delta = v_new - params_old
+            else:
+                self.update_params(params_new - v_new)
+            print('params after ', flatten_tensor_list(self.get_grads_and_params()[1]))
+
 
         function_decrease = previous_f - current_f
         model_decrease = -delta_m
@@ -356,8 +408,10 @@ class SRCutils(Optimizer):
 
         #assert (model_decrease >= 0), 'negative model decrease. This should not have happened'
         if self.case_n == 1:
-            print('Case 1', delta_m, -function_decrease, -np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
-            if max(delta_m, -function_decrease) <= \
+            print('Case 1', delta_m, -function_decrease,
+                  max(delta_m, -function_decrease),
+                  -np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
+            if max(delta_m, -function_decrease).detach().numpy() > \
                    -np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
                 'Case 1 is not satisfied!'
                 self.defaults['double_sample_size'] = True
@@ -369,9 +423,13 @@ class SRCutils(Optimizer):
         if rho >= self.defaults['eta_1']:
             # We assume only one group for now
             print('Successful iteration', self.defaults['sigma'])
+            grad_old, params_old = self.get_grads_and_params()
+            self.step_old = flatten_tensor_list(params_old)
             #self.update_params(delta)
         else:
-            self.update_params(-delta)
+            # ToDo: fix problematic updates with small batch size and Cauchy - super risky!
+            if self.case_n == 2 or function_decrease < 0:
+                self.update_params(-delta)
 
         # Update the penalty parameter rho (in the code it's sigma) if adaptive_rho = True.
         # It is so by default
@@ -383,7 +441,8 @@ class SRCutils(Optimizer):
                 print('Very successful iteration', self.defaults['sigma'])
 
             elif rho < self.defaults['eta_1']:
-                self.defaults['sigma'] = self.defaults['sigma'] * self.defaults['gamma']
+                if self.case_n == 2:
+                    self.defaults['sigma'] = self.defaults['sigma'] * self.defaults['gamma']
                 print('Unsuccessful iteration', self.defaults['sigma'])
 
     def hessian_vector_product(self, v):
