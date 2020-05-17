@@ -1,6 +1,7 @@
 import torch
 import time
 import numpy as np
+import pandas as pd
 import scipy.linalg as la
 from torch.optim.optimizer import Optimizer
 import matplotlib.pyplot as plt
@@ -57,13 +58,12 @@ class SRCutils(Optimizer):
         self.test_losses = []
         self.step_old = None
 
-
         self.defaults = dict(grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=subproblem_solver,
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.0001),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.001),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.01),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.01),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
@@ -72,6 +72,10 @@ class SRCutils(Optimizer):
                              target=None,
                              log_interval=opt.get('log_interval', 1)
                              )
+
+        self.f_name = 'fig/loss_src_' + self.defaults['subproblem_solver'] \
+                     + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
+                     + '_' + str(self.defaults['sample_size_gradient'] * self.n)
         super(SRCutils, self).__init__(params, self.defaults)
 
     def get_accuracy(self, loader):
@@ -114,7 +118,15 @@ class SRCutils(Optimizer):
                                                                      test_acc))
             self.test_losses.append(test_loss)
             plt.plot(self.gradient_samples_seen, self.test_losses)
-            plt.savefig('fig/loss_src.png')
+            print('batch id', batch_idx)
+            pd.DataFrame({'samples': [self.gradient_samples_seen[-1]],
+                          'losses': [self.test_losses[-1]]
+                          }).\
+                to_csv(self.f_name + '.csv',
+                       header=batch_idx == 0,
+                       mode='w' if batch_idx == 0 else 'a',
+                       index=None)
+            plt.savefig(self.f_name + '.png')
             print('idx ', batch_idx, self.test_losses, self.gradient_samples_seen)
             self.gradient_samples_seen.append(self.gradient_samples_seen[-1])
 
@@ -312,12 +324,13 @@ class SRCutils(Optimizer):
                     theta = lambda_ / (lambda_old + 1e-5)
                     print('delta_m = ', self.m_delta(delta))
                     # Empirical rule
+                    print(abs(self.m_delta(delta)), abs(self.test_losses[0]))
                     if abs(self.m_delta(delta)) > abs(self.test_losses[0]) and i > 2:
                         print('delta_m has been increasing too much')
                         return delta, self.m_delta(delta)
 
                 else:
-                    delta -= eta * (
+                    delta = delta - eta * (
                             g_ +
                             self.hessian_vector_product(delta) +
                             (self.defaults['sigma'] / 2) * delta.norm(p=2) * delta

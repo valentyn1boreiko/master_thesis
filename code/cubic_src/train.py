@@ -1,6 +1,10 @@
 import copy
 from config import *
-import matplotlib.pyplot as plt
+from pympler.tracker import SummaryTracker
+from pympler import summary
+from pympler import muppy
+
+tracker = SummaryTracker()
 
 last_model = copy.deepcopy(model)
 
@@ -34,6 +38,10 @@ for epoch in range(optimizer.defaults['n_epochs']):
 
         optimizer.print_acc(train_loader, epoch, batch_idx)
         print('Train data size ', data.size())
+        tracker.print_diff()
+        all_objects = muppy.get_objects()
+        sum1 = summary.summarize(all_objects)
+        summary.print_(sum1)
         optimizer.zero_grad()
         loss_fn(model(data), target).backward(create_graph=True)
         optimizer.defaults['train_data'] = data

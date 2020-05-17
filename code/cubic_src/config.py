@@ -72,7 +72,7 @@ model = Net().to(dev)
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=10)
+           log_interval=3)
 
 optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
 #scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
