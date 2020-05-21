@@ -4,8 +4,10 @@ import numpy as np
 import pandas as pd
 import scipy.linalg as la
 from torch.optim.optimizer import Optimizer
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import config
+#import config
 
 
 def init_train_loader(dataloader, train, sampling_scheme_name='fixed'):
@@ -123,8 +125,8 @@ class SRCutils(Optimizer):
                           'losses': [self.test_losses[-1]]
                           }).\
                 to_csv(self.f_name + '.csv',
-                       header=batch_idx == 0,
-                       mode='w' if batch_idx == 0 else 'a',
+                       header=(batch_idx == 0 and len(self.test_losses) == 1),
+                       mode='w' if (batch_idx == 0 and len(self.test_losses) == 1) else 'a',
                        index=None)
             plt.savefig(self.f_name + '.png')
             print('idx ', batch_idx, self.test_losses, self.gradient_samples_seen)
@@ -478,7 +480,6 @@ class SRCutils(Optimizer):
         hv = torch.autograd.grad(gradsh, params, grad_outputs=v,
                                  only_inputs=True, retain_graph=True)
         print('hess vec product time: ', time.time() - end3)
-        #print(hv)
         return flatten_tensor_list(hv)
 
 

@@ -10,6 +10,8 @@ import torch.nn.functional as F
 from torch import nn, optim
 from resnet_cifar import resnet20_cifar
 
+problem = 'matrix_completion'  # MNIST, matrix_completion
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -69,11 +71,13 @@ else:
 
 model = Net().to(dev)
 
+# MNIST opt
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
            log_interval=3)
 
+#
 optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
 #scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
 
