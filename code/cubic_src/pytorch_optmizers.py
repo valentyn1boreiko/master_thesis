@@ -24,7 +24,11 @@ class SRC(utils.SRCutils):
 
         print('Model update')
         self.model_update(delta, delta_m)
-        self.gradient_samples_seen[-1] += self.defaults['train_data'].size(0)
+        if self.defaults['problem'] == 'matrix_completion':
+            self.gradient_samples_seen[-1] += len(self.defaults['target'])
+        else:
+            self.gradient_samples_seen[-1] += self.defaults['train_data'].size(0)
+
         # Check if we are doing enough progress
         print('final accuracy ', -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
         # ToDo: check if condition delta_m <= 0 is required

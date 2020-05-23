@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import nn, optim
 from resnet_cifar import resnet20_cifar
 
-problem = 'matrix_completion'  # MNIST, matrix_completion
+problem = 'MNIST'  # MNIST, matrix_completion
 
 
 class Net(nn.Module):
