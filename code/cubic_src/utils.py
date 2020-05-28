@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Comment it out while using matrix_completion.py insteat of train.py
+# Comment it out while using matrix_completion.py or w-function.py instead of train.py
 import config
 
 
@@ -68,13 +68,13 @@ class SRCutils(Optimizer):
         self.test_losses = []
         self.step_old = None
 
-        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST
+        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=subproblem_solver,
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.01),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.01),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.00002),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.00002),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
@@ -84,10 +84,36 @@ class SRCutils(Optimizer):
                              log_interval=opt.get('log_interval', 1)
                              )
 
-        self.f_name = 'fig/loss_src_' + self.defaults['subproblem_solver'] \
-                     + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
-                     + '_' + str(self.defaults['sample_size_gradient'] * self.n)
+        self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
+        self.is_w_function = self.defaults['problem'] == 'w-function'
+        self.is_mnist = self.defaults['problem'] == 'MNIST'
+
+        self.f_name = 'fig/loss_' + self.defaults['problem'] \
+                      + '_' + self.defaults['subproblem_solver'] \
+                      + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
+                      + '_' + str(self.defaults['sample_size_gradient'] * self.n)
+
         super(SRCutils, self).__init__(params, self.defaults)
+
+    def perturb(self, type_='gradient', hv=None):
+        if type_ == 'gradient':
+            for p in self.param_groups[0]['params']:
+                # Generate N(0, 1) perturbations of the gradient
+                p.grad = (torch.randn(
+                    (self.get_num_points(),
+                     p.shape[0])
+                ) + p.grad).mean(dim=0)
+
+        elif type_ == 'hessian':
+            hv = (torch.randn(
+                    (self.get_num_points(type_=type_),
+                     hv.shape[0])
+                ) + hv).mean(dim=0)
+
+            return hv
+
+    def get_num_points(self, type_='gradient'):
+        return int(self.n * self.defaults['sample_size_' + type_])
 
     def get_accuracy(self, loader):
         self.model.eval()
@@ -355,7 +381,7 @@ class SRCutils(Optimizer):
                     theta = lambda_ / (lambda_old + 1e-5)
                     print('delta_m = ', self.m_delta(delta))
                     # Empirical rule
-                    if self.defaults['problem'] != 'matrix_completion':
+                    if self.defaults['problem'] == 'mnist':
                         print(abs(self.m_delta(delta)), abs(self.test_losses[0]))
                         if abs(self.m_delta(delta)) > abs(self.test_losses[0]) and i > 2:
                             print('delta_m has been increasing too much')
@@ -413,13 +439,13 @@ class SRCutils(Optimizer):
 
     def model_update(self, delta, delta_m):
 
-        is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
+        x = self.param_groups[0]['params']
 
-        if is_matrix_completion:
-            u, v = index_to_params(self.defaults['train_data'], self.param_groups[0]['params'])
+        if self.is_matrix_completion:
+            u, v = index_to_params(self.defaults['train_data'], x)
             previous_f = self.loss_fn(
                 self.model(
-                    self.param_groups[0]['params'],
+                    x,
                     self.defaults['train_data']
                 ),
                 self.defaults['target'],
@@ -427,12 +453,13 @@ class SRCutils(Optimizer):
 
             previous_f_ = self.loss_fn(
                 self.model(
-                    self.param_groups[0]['params'],
+                    x,
                     self.defaults['train_data'],
                 ),
                 self.defaults['target'],
                 u, v)
-        else:
+
+        elif self.is_mnist:
             previous_f = self.loss_fn(
                 self.model(
                     self.defaults['train_data']
@@ -445,31 +472,38 @@ class SRCutils(Optimizer):
                 ),
                 self.defaults['target'])
 
+        elif self.is_w_function:
+            previous_f = self.model(x[0])
+            previous_f_ = self.model(x[0])
+
         params_old = flatten_tensor_list(self.get_grads_and_params()[1])
         momentum_const = 0.9
         self.update_params(delta)
+        x = self.param_groups[0]['params']
 
-        if is_matrix_completion:
+        if self.is_matrix_completion:
             current_f = self.loss_fn(
                 self.model(
-                    self.param_groups[0]['params'],
+                    x,
                     self.defaults['train_data']
                 ),
                 self.defaults['target'],
                 u, v)
-        else:
+        elif self.is_mnist:
             current_f = self.loss_fn(
                 self.model(
                     self.defaults['train_data']
                 ),
                 self.defaults['target'])
+        elif self.is_w_function:
+            current_f = self.model(x[0])
 
         params_new = flatten_tensor_list(self.get_grads_and_params()[1])
         print('change params', params_old.norm(p=2), params_new.norm(p=2), (params_old - params_new).norm(p=2))
         print('prev f', previous_f, previous_f_)
         print('curr f', current_f)
 
-        if not is_matrix_completion and \
+        if not self.is_matrix_completion and \
                 self.step_old is not None and current_f < previous_f:
             grad_new, params_new = self.get_grads_and_params()
             params_new = flatten_tensor_list(params_new)
@@ -482,7 +516,10 @@ class SRCutils(Optimizer):
             print('params 0 ', flatten_tensor_list(self.get_grads_and_params()[1]))
             self.update_params(v_new)
             print('params mid ', flatten_tensor_list(self.get_grads_and_params()[1]))
-            v_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
+            if self.is_w_function:
+                v_f = self.loss_fn(self.param_groups[0]['params'][0])
+            else:
+                v_f = self.loss_fn(self.model(self.defaults['train_data']), self.defaults['target'])
             print('v f', v_f)
             if v_f < current_f:
                 current_f = v_f
@@ -545,23 +582,31 @@ class SRCutils(Optimizer):
         v is the vector.
         """
         end3 = time.time()
+
+
         # Compute Hessian on the same sample of points
-        try:
-            data, target = next(self.defaults['dataloader_iterator_hess'])
-        except StopIteration:
-            print('exception')
-            if self.defaults['problem'] == 'matrix_completion':
-                dataloader_iterator_hess = iter(self.defaults['train_loader_hess'])
-            else:
-                dataloader_iterator_hess = iter(config.train_loader_hess)
-            data, target = next(dataloader_iterator_hess)
+        if not self.is_w_function:
+            try:
+                data, target = next(self.defaults['dataloader_iterator_hess'])
+            except StopIteration:
+                print('exception')
+                if self.defaults['problem'] == 'matrix_completion':
+                    dataloader_iterator_hess = iter(self.defaults['train_loader_hess'])
+                else:
+                    dataloader_iterator_hess = iter(config.train_loader_hess)
+                data, target = next(dataloader_iterator_hess)
+
         self.zero_grad()
-        is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
-        if is_matrix_completion:
-            data_ = index_to_params(data, self.param_groups[0]['params'])
+        x = self.param_groups[0]['params']
+
+        if self.is_matrix_completion:
+            data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
-        else:
+        elif self.is_mnist:
             self.loss_fn(self.model(data), target).backward(create_graph=True)
+        elif self.is_w_function:
+            self.model(x[0]).backward(create_graph=True)
+            self.perturb()
 
         gradsh, params = self.get_grads_and_params()
         #print('grads ', len(gradsh), gradsh)
@@ -569,23 +614,24 @@ class SRCutils(Optimizer):
         #print(len(gradsh), len(params), v.shape)
         # ToDo - super dangerous, only for matrix_completion
         v_temp = v.clone()
-        if is_matrix_completion:
+        if self.is_matrix_completion:
             if len(gradsh) < len(v):
                 v_temp = v[:len(gradsh)]
 
             elif len(gradsh) > len(v):
                 v_temp = torch.cat((v, torch.zeros(len(gradsh) - len(v))))
 
-
-        if is_matrix_completion:
             hv = torch.autograd.grad(gradsh, data_, grad_outputs=v_temp,
                                      only_inputs=True, retain_graph=True)
+
         else:
             hv = torch.autograd.grad(gradsh, params, grad_outputs=v_temp,
                                  only_inputs=True, retain_graph=True)
+        if self.is_w_function:
+            hv = self.perturb(type_='hessian', hv=hv[0])
 
         #print(torch.cat(hv).unique(dim=0).shape)
-        if is_matrix_completion:
+        if self.is_matrix_completion:
             rank = self.defaults['rank']
             hv_shape = torch.cat(hv).unique(dim=0).shape
             hv_unique_shape = hv_shape[0] * hv_shape[1]

@@ -75,10 +75,11 @@ model = Net().to(dev)
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=3)
+           log_interval=160)
 
 #
 optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
+#optimizer = optim.SGD(model.parameters(), lr=0.01)
 #scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
 
 # Detecting device
