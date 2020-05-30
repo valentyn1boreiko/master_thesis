@@ -73,6 +73,7 @@ def to_img(x):
 
 def train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use):
     model.train()
+
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
@@ -154,7 +155,7 @@ def main():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.4, metavar='LR',
                         help='learning rate (default: 1.0)')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
@@ -210,7 +211,7 @@ def main():
     model = models[network_to_use].to(device)
     criterion = criteria[network_to_use]
 
-    optimizer_ = 'Adam'
+    optimizer_ = 'SGD'
     optimizers = {'SGD': optim.SGD,
                   'Adam': optim.Adam}
 
@@ -227,6 +228,8 @@ def main():
     optimizer.losses = []
 
     scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
+
+    test(model, device, test_loader, optimizer, 0, args.log_interval, criterion, network_to_use)
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use)
         #test(model, device, test_loader)

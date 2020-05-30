@@ -26,7 +26,7 @@ opt = dict(model=model,
            sample_size_gradient=0.001)
 
 problem_type = 'non-convex'  # convex, non-convex
-max_iter = int(3e3)
+max_iter = int(3e2)
 step_size = 0.03
 momentum = 0.0
 
@@ -40,7 +40,7 @@ grad_norms = []
 samples_seen = [0]
 
 if optimizer_type == 'SGD':
-    f_name = 'fig/w-function/computations_' + to_plot \
+    f_name = 'fig/w-function/computations_momentum_' + to_plot \
          + '_' + optimizer_type\
          + '_' + problem_type\
          + '_' + str(int(opt['sample_size_gradient'] * opt['n']))\
@@ -72,7 +72,7 @@ for op_num in range(averaging_ops):
                 # Running mean
                 if i > 0:
                     losses[i] = (losses[i] * op_num + loss_.item()) / (op_num + 1)
-
+        optimizer.computations_done.append(optimizer.computations_done[-1])
         if op_num == 0 and i > 0:
             # Nr of gradient samples
             samples_seen.append(samples_seen[-1]
@@ -92,7 +92,7 @@ for op_num in range(averaging_ops):
                 grad_norms.append(p.norm(p=2))
 
         if i == 2:
-            plt.plot(optimizer.computations_done if optimizer_type == 'SRC' else samples_seen,
+            plt.plot(optimizer.computations_done[:-1] if optimizer_type == 'SRC' else samples_seen,
                      losses if to_plot == 'loss' else grad_norms)
             plt.savefig(f_name + '.png')
         # Generate N(0, 1) perturbations of the gradient
@@ -110,6 +110,7 @@ for op_num in range(averaging_ops):
         optimizer.step()
         print('loss = ', loss_)
         if optimizer_type == 'SRC':
+            print(losses, optimizer.computations_done)
             assert len(losses) == len(optimizer.computations_done[:-1]), 'losses != computations_done !'
 
     print('Epoch {} done!'.format(op_num))

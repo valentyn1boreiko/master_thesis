@@ -54,7 +54,7 @@ def index_to_params(idx, params_):
 
 
 class SRCutils(Optimizer):
-    def __init__(self, params, adaptive_rho=True, subproblem_solver='adaptive',
+    def __init__(self, params, adaptive_rho=True,
                  batchsize_mode='fixed', opt=None):
 
         if opt is None:
@@ -70,13 +70,21 @@ class SRCutils(Optimizer):
         self.test_losses = []
         self.step_old = None
 
-        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function
+        # Momentum, experimental
+        self.b_1 = 0.9
+        self.b_2 = 0.999
+        self.m = 0
+        self.v = 0
+        self.t = 0
+        self.epsilon = 1e-08
+
+        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
-                             subproblem_solver=subproblem_solver,
+                             subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 / 6),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.01 / 6),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 ),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.001),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
@@ -91,7 +99,7 @@ class SRCutils(Optimizer):
         self.is_mnist = self.defaults['problem'] == 'MNIST'
         self.is_AE = self.defaults['problem'] == 'AE'
 
-        self.f_name = 'fig/loss_' + self.defaults['problem'] \
+        self.f_name = 'fig/loss_momentum_' + self.defaults['problem'] \
                       + '_' + self.defaults['subproblem_solver'] \
                       + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
                       + '_' + str(self.defaults['sample_size_gradient'] * self.n)
@@ -530,6 +538,8 @@ class SRCutils(Optimizer):
         print('prev f', previous_f, previous_f_)
         print('curr f', current_f)
 
+        # Momentum as in the paper
+        # Z. Want et al. Cubic Regularization with Momentum for Nonconvex Optimization. AUAI, 2018.
         if not self.is_matrix_completion and \
                 self.step_old is not None and current_f < previous_f:
             grad_new, params_new = self.get_grads_and_params()
@@ -554,7 +564,6 @@ class SRCutils(Optimizer):
             else:
                 self.update_params(params_new - v_new)
             print('params after ', flatten_tensor_list(self.get_grads_and_params()[1]))
-
 
         function_decrease = previous_f - current_f
         model_decrease = -delta_m
