@@ -4,31 +4,34 @@ from torch import optim
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
 def model(xy):
     x, y = xy[0], xy[1]
     #return torch.sin(x) + y**2
     #return ((x**2-100)*(x**2-1))/(100/3) - 100/(100/3) + 100*y**2
     return ((x**2-0.8)*(x**2-0.01))/(100/3) - 0.008/(100/3) + 10*y**2
 
+
 def convex_func(xy):
     x, y = xy[0], xy[1]
     return x**2 + y**2
 
+
 opt = dict(model=model,
            loss_fn=model,
            n=1000,
-           log_interval=1,
+           log_interval=100,
            problem='w-function',
            sample_size_hessian=0.001,
            sample_size_gradient=0.001)
 
-problem_type = 'non-convex' # convex, non-convex
-max_iter = int(3e2)
-step_size = 1e-3
+problem_type = 'non-convex'  # convex, non-convex
+max_iter = int(3e3)
+step_size = 0.03
 momentum = 0.0
 
-optimizer_type = 'SGD' # SRC, SGD
-to_plot = 'grad_norm' # grad_norm, loss
+optimizer_type = 'SRC'  # SRC, SGD
+to_plot = 'loss'  # grad_norm, loss
 
 averaging_ops = 1
 losses = []
@@ -36,24 +39,29 @@ grad_norms = []
 
 samples_seen = [0]
 
-"""
-f_name = 'fig/temp/' + to_plot \
+if optimizer_type == 'SGD':
+    f_name = 'fig/w-function/computations_' + to_plot \
          + '_' + optimizer_type\
          + '_' + problem_type\
          + '_' + str(int(opt['sample_size_gradient'] * opt['n']))\
          + '_' + str(int(opt['sample_size_hessian'] * opt['n']))\
-         + ('_' + str(step_size)) if optimizer_type == 'SGD' else '' \
+         + '_' + str(step_size) \
          + '_' + str(averaging_ops)
-"""
-f_name = 'fig/temp/SGD_norm'
+elif optimizer_type == 'SRC':
+    f_name = 'fig/w-function/computations_' + to_plot \
+             + '_' + optimizer_type \
+             + '_' + problem_type \
+             + '_' + str(int(opt['sample_size_gradient'] * opt['n'])) \
+             + '_' + str(int(opt['sample_size_hessian'] * opt['n'])) \
+             + '_' + str(averaging_ops)
+
 
 for op_num in range(averaging_ops):
-    X = torch.tensor([-6.9655, -89.1453], requires_grad=True)
+    X = torch.tensor([0.0, 0.0], requires_grad=True)
     if optimizer_type == 'SRC':
         optimizer = SRC([X], opt=opt)
     elif optimizer_type == 'SGD':
         optimizer = optim.SGD([X], lr=step_size, momentum=momentum)
-
 
     for i in range(max_iter):
         loss_ = model(X)
@@ -77,7 +85,6 @@ for op_num in range(averaging_ops):
         if to_plot == 'loss' else grad_norms,
               samples_seen)
 
-
         optimizer.zero_grad()
         loss_.backward(create_graph=True)
         if to_plot == 'grad_norm':
@@ -85,7 +92,8 @@ for op_num in range(averaging_ops):
                 grad_norms.append(p.norm(p=2))
 
         if i == 2:
-            plt.plot(samples_seen, losses if to_plot == 'loss' else grad_norms)
+            plt.plot(optimizer.computations_done if optimizer_type == 'SRC' else samples_seen,
+                     losses if to_plot == 'loss' else grad_norms)
             plt.savefig(f_name + '.png')
         # Generate N(0, 1) perturbations of the gradient
         if optimizer_type == 'SRC':
@@ -101,12 +109,15 @@ for op_num in range(averaging_ops):
 
         optimizer.step()
         print('loss = ', loss_)
+        if optimizer_type == 'SRC':
+            assert len(losses) == len(optimizer.computations_done[:-1]), 'losses != computations_done !'
 
     print('Epoch {} done!'.format(op_num))
 
 print(samples_seen)
 print(losses)
 pd.DataFrame({'samples': samples_seen,
+              'computations': samples_seen if optimizer_type == 'SGD' else optimizer.computations_done[:-1],
               'losses'
               if to_plot == 'loss' else 'grad_norm':
                   losses if to_plot == 'loss' else grad_norms
@@ -115,6 +126,8 @@ pd.DataFrame({'samples': samples_seen,
                header=True,
                mode='w',
                index=None)
-
-plt.plot(samples_seen, losses if to_plot == 'loss' else grad_norms)
+if optimizer_type == 'SGD':
+    plt.plot(samples_seen, losses if to_plot == 'loss' else grad_norms)
+elif optimizer_type == 'SRC':
+    plt.plot(optimizer.computations_done[:-1], losses if to_plot == 'loss' else grad_norms)
 plt.savefig(f_name + '.png')

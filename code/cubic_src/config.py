@@ -10,8 +10,6 @@ import torch.nn.functional as F
 from torch import nn, optim
 from resnet_cifar import resnet20_cifar
 
-problem = 'MNIST'  # MNIST, matrix_completion
-
 
 class Net(nn.Module):
     def __init__(self):
@@ -39,43 +37,91 @@ class Net(nn.Module):
         return output
 
 
+class AE_MNIST(nn.Module):
+    def __init__(self):
+        super(AE_MNIST, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(28 * 28, 512),
+            nn.Softplus(True),
+            nn.Linear(512, 256),
+            nn.Softplus(True),
+            nn.Linear(256, 128),
+            nn.Softplus(True),
+            nn.Linear(128, 32)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(32, 128),
+            nn.Softplus(True),
+            nn.Linear(128, 256),
+            nn.Softplus(True),
+            nn.Linear(256, 512),
+            nn.Softplus(True),
+            nn.Linear(512, 28 * 28),
+            nn.Tanh())
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+
+def to_img(x):
+    x = 0.5 * (x + 1)
+    x = x.clamp(0, 1)
+    x = x.view(x.size(0), 1, 28, 28)
+    return x
+
+
+network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST
+
+transforms_dict = {
+        'CNN_MNIST': transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.1307,), (0.3081,))
+                       ]),
+        'AE_MNIST': transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.5,), (0.5,))
+                       ])
+    }
+
+models = {'AE_MNIST': AE_MNIST(),
+          'CNN_MNIST': Net()}
+
+criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
+            'CNN_MNIST': F.nll_loss}
+
 # Loading the data
-train = MNIST('./data', train=True, download=True, transform=transforms.Compose([
-                               transforms.ToTensor(),
-                               transforms.Normalize(
-                                 (0.1307,), (0.3081,))
-                             ]), )
+train = MNIST('./data', train=True, download=True,
+              transform=transforms_dict[network_to_use], )
 
 # Get the number of samples in the dataset
 n = train.data.shape[0]
 
-test = MNIST('./data', train=False, download=True, transform=transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(
-        (0.1307,), (0.3081,))
-]), )
+test = MNIST('./data', train=False, download=True,
+             transform=transforms_dict[network_to_use], )
 
 #loss_fn = CrossEntropyLoss()
 
-loss_fn = F.nll_loss
+loss_fn = criteria[network_to_use]
 # Loading the model
 #model = resnet20_cifar()
-input_size = 784
-hidden_sizes = [128, 64]
-output_size = 10
+#input_size = 784
+#hidden_sizes = [128, 64]
+#output_size = 10
 
 if torch.cuda.is_available():
     dev = 'cuda'
 else:
     dev = 'cpu'
 
-model = Net().to(dev)
+model = models[network_to_use].to(dev)
 
 # MNIST opt
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=160)
+           log_interval=100)
 
 #
 optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)

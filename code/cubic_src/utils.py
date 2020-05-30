@@ -3,6 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 import scipy.linalg as la
+from torch.autograd import Variable
 from torch.optim.optimizer import Optimizer
 import matplotlib
 matplotlib.use('Agg')
@@ -64,35 +65,37 @@ class SRCutils(Optimizer):
         self.case_n = 1
         self.n = opt['n']
         self.grad, self.params = None, None
-        self.gradient_samples_seen = [0]
+        self.samples_seen = [0]
+        self.computations_done = [0]
         self.test_losses = []
         self.step_old = None
 
-        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function
+        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=subproblem_solver,
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.00002),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.00002),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 / 6),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.01 / 6),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
                              sigma=opt.get('initial_penalty_parameter', 16.),
                              n_epochs=opt.get('n_epochs', 14),
                              target=None,
-                             log_interval=opt.get('log_interval', 1)
+                             log_interval=opt.get('log_interval', 600)
                              )
 
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
         self.is_w_function = self.defaults['problem'] == 'w-function'
         self.is_mnist = self.defaults['problem'] == 'MNIST'
+        self.is_AE = self.defaults['problem'] == 'AE'
 
         self.f_name = 'fig/loss_' + self.defaults['problem'] \
                       + '_' + self.defaults['subproblem_solver'] \
                       + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
                       + '_' + str(self.defaults['sample_size_gradient'] * self.n)
-
+        print('Saving in:', self.f_name)
         super(SRCutils, self).__init__(params, self.defaults)
 
     def perturb(self, type_='gradient', hv=None):
@@ -121,26 +124,35 @@ class SRCutils(Optimizer):
 
         for batch_idx_, (data_, target_) in enumerate(loader):
             # Get Samples
+            n = len(data_)
+            if self.is_AE:
+                data_ = Variable(data_.view(data_.size(0), -1))
+                target_ = data_
             data_ = data_.to(self.defaults['dev'])
             target_ = target_.to(self.defaults['dev'])
             outputs = self.model(data_)
-            loss += self.loss_fn(outputs, target_).detach() * len(target_)
+            if self.is_AE:
+                loss += self.loss_fn(outputs, target_).item() * n
+            else:
+                loss += self.loss_fn(outputs, target_, reduction='sum').item()
             # Get prediction
             _, predicted = torch.max(outputs.data, 1)
             # Total number of labels
             total += len(target_)
             # Total correct predictions
-            correct += (predicted == target_).sum().detach()
+            if not self.is_AE:
+                correct += (predicted == target_).sum().detach()
             del outputs
             del predicted
 
-        acc = 100 * correct / total
-        loss = loss / total
+        if not self.is_AE:
+            acc = 100 * correct / total
+        loss = loss / len(loader.dataset)
 
         print("All points {}".format(total))
-        return loss, acc
+        return loss, (acc if not self.is_AE else None)
 
-    def print_acc(self, train_loader, epoch, batch_idx):
+    def print_acc(self, batch_size, epoch, batch_idx):
         #train_loss, train_acc = self.get_accuracy(train_loader)
         #print(
         #    "Epoch {} Train Loss: {:.4f} Accuracy :{:.4f} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch, train_loss,
@@ -148,17 +160,27 @@ class SRCutils(Optimizer):
         #                                                                                             test_loss,
         #                                                                                             test_acc))
 
-        if batch_idx % self.defaults['log_interval'] == 0:
+        if batch_idx * batch_size % self.defaults['log_interval'] == 0:
             test_loss, test_acc = self.get_accuracy(config.test_loader)
+            if not self.is_AE:
+                print(
+                    "Epoch {} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch,
+                                                                         test_loss,
+                                                                         test_acc
+                                                                         )
+                )
+            else:
+                print(
+                    "Epoch {} Test Loss: {:.4f}".format(epoch,
+                                                        test_loss
+                                                        )
+                )
 
-            print(
-                "Epoch {} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch,
-                                                                     test_loss,
-                                                                     test_acc))
             self.test_losses.append(test_loss)
-            plt.plot(self.gradient_samples_seen, self.test_losses)
+            plt.plot(self.computations_done, self.test_losses)
             print('batch id', batch_idx)
-            pd.DataFrame({'samples': [self.gradient_samples_seen[-1]],
+            pd.DataFrame({'samples': [self.samples_seen[-1]],
+                          'computations': [self.computations_done[-1]],
                           'losses': [self.test_losses[-1]]
                           }).\
                 to_csv(self.f_name + '.csv',
@@ -166,8 +188,9 @@ class SRCutils(Optimizer):
                        mode='w' if (batch_idx == 0 and len(self.test_losses) == 1) else 'a',
                        index=None)
             plt.savefig(self.f_name + '.png')
-            print('idx ', batch_idx, self.test_losses, self.gradient_samples_seen)
-            self.gradient_samples_seen.append(self.gradient_samples_seen[-1])
+            print('idx ', batch_idx, self.test_losses, self.samples_seen)
+            self.samples_seen.append(self.samples_seen[-1])
+            self.computations_done.append(self.computations_done[-1])
 
     def cauchy_point(self, grads_norm):
         # Compute Cauchy radius
@@ -309,6 +332,7 @@ class SRCutils(Optimizer):
                / (delta_).norm(p=2)
 
     def cubic_subsolver(self):
+
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim, norm = ', self.grad.size(), self.grad.norm(p=2), len(self.params))
         beta = np.sqrt(self.get_hessian_eigen())
@@ -323,6 +347,7 @@ class SRCutils(Optimizer):
             self.case_n = 1
             # Get the Cauchy point
             delta = self.cauchy_point(grad_norm)
+            self.computations_done[-1] += self.get_num_points() + self.get_num_points('hessian')
             print('delta_m ', self.m_delta(delta))
         else:
             self.case_n = 2
@@ -381,7 +406,7 @@ class SRCutils(Optimizer):
                     theta = lambda_ / (lambda_old + 1e-5)
                     print('delta_m = ', self.m_delta(delta))
                     # Empirical rule
-                    if self.defaults['problem'] == 'mnist':
+                    if self.is_AE or self.is_mnist:
                         print(abs(self.m_delta(delta)), abs(self.test_losses[0]))
                         if abs(self.m_delta(delta)) > abs(self.test_losses[0]) and i > 2:
                             print('delta_m has been increasing too much')
@@ -397,6 +422,8 @@ class SRCutils(Optimizer):
                     )
                     print('delta_m = ', self.m_delta(delta))
 
+                self.computations_done[-1] += self.get_num_points('hessian')
+            self.computations_done[-1] += self.get_num_points()
         return delta, self.m_delta(delta)
 
     def cubic_final_subsolver(self):
@@ -459,7 +486,7 @@ class SRCutils(Optimizer):
                 self.defaults['target'],
                 u, v)
 
-        elif self.is_mnist:
+        elif self.is_mnist or self.is_AE:
             previous_f = self.loss_fn(
                 self.model(
                     self.defaults['train_data']
@@ -489,7 +516,7 @@ class SRCutils(Optimizer):
                 ),
                 self.defaults['target'],
                 u, v)
-        elif self.is_mnist:
+        elif self.is_mnist or self.is_AE:
             current_f = self.loss_fn(
                 self.model(
                     self.defaults['train_data']
@@ -596,17 +623,22 @@ class SRCutils(Optimizer):
                     dataloader_iterator_hess = iter(config.train_loader_hess)
                 data, target = next(dataloader_iterator_hess)
 
+            if self.is_AE:
+                data = Variable(data.view(data.size(0), -1))
+                target = data
+
         self.zero_grad()
         x = self.param_groups[0]['params']
 
         if self.is_matrix_completion:
             data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
-        elif self.is_mnist:
+        elif self.is_mnist or self.is_AE:
             self.loss_fn(self.model(data), target).backward(create_graph=True)
         elif self.is_w_function:
             self.model(x[0]).backward(create_graph=True)
             self.perturb()
+
 
         gradsh, params = self.get_grads_and_params()
         #print('grads ', len(gradsh), gradsh)
@@ -626,7 +658,7 @@ class SRCutils(Optimizer):
 
         else:
             hv = torch.autograd.grad(gradsh, params, grad_outputs=v_temp,
-                                 only_inputs=True, retain_graph=True)
+                                     only_inputs=True, retain_graph=True)
         if self.is_w_function:
             hv = self.perturb(type_='hessian', hv=hv[0])
 

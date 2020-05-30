@@ -1,4 +1,5 @@
 import copy
+from torch.autograd import Variable
 from config import *
 import gc
 
@@ -32,8 +33,10 @@ for epoch in range(optimizer.defaults['n_epochs']):
         #except StopIteration:
         #    dataloader_iterator = iter(train_loader)
         #    data, target = next(dataloader_iterator)
-
-        optimizer.print_acc(train_loader, epoch, batch_idx)
+        if network_to_use == 'AE_MNIST':
+            data = Variable(data.view(data.size(0), -1))
+            target = data
+        optimizer.print_acc(len(data), epoch, batch_idx)
         print('Train data size ', data.size())
         optimizer.zero_grad()
         loss_fn(model(data), target).backward(create_graph=True)

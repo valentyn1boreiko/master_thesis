@@ -24,12 +24,7 @@ class SRC(utils.SRCutils):
 
         print('Model update')
         self.model_update(delta, delta_m)
-        if self.is_matrix_completion:
-            self.gradient_samples_seen[-1] += len(self.defaults['target'])
-        elif self.is_mnist:
-            self.gradient_samples_seen[-1] += self.defaults['train_data'].size(0)
-        elif self.is_w_function:
-            self.gradient_samples_seen[-1] += self.get_num_points()
+        self.samples_seen[-1] += self.get_num_points() + self.get_num_points('hessian')
 
 
         # Check if we are doing enough progress
