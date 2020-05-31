@@ -78,20 +78,23 @@ class SRCutils(Optimizer):
         self.t = 0
         self.epsilon = 1e-08
 
-        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function
+        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 ),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.001),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 / 6),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.01 / 6),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
                              sigma=opt.get('initial_penalty_parameter', 16.),
                              n_epochs=opt.get('n_epochs', 14),
                              target=None,
-                             log_interval=opt.get('log_interval', 600)
+                             log_interval=opt.get('log_interval', 600),
+                             delta_momentum=opt.get('delta_momentum', True),
+                             delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.001),
+                             AccGD=opt.get('AccGD', False),
                              )
 
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
@@ -99,7 +102,7 @@ class SRCutils(Optimizer):
         self.is_mnist = self.defaults['problem'] == 'MNIST'
         self.is_AE = self.defaults['problem'] == 'AE'
 
-        self.f_name = 'fig/loss_momentum_' + self.defaults['problem'] \
+        self.f_name = 'fig/loss_momentum_0.005_' + self.defaults['problem'] \
                       + '_' + self.defaults['subproblem_solver'] \
                       + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
                       + '_' + str(self.defaults['sample_size_gradient'] * self.n)
@@ -208,7 +211,7 @@ class SRCutils(Optimizer):
         delta = -R_c * self.grad / grads_norm
         return delta
 
-    def get_eigen(self, H_bmm, matrix=None, maxIter=10, tol=1e-3, method='lanczos'):
+    def get_eigen(self, H_bmm, matrix=None, maxIter=10, tol=1e-3, method='power'):
         """
         compute the top eigenvalues of model parameters and
         the corresponding eigenvectors.
@@ -237,10 +240,10 @@ class SRCutils(Optimizer):
                     eigenvalue = eigenvalue_tmp
                 else:
                     if abs(eigenvalue - eigenvalue_tmp) / abs(eigenvalue) < tol:
-                        return eigenvalue_tmp, q
+                        return eigenvalue_tmp.item()
                     else:
                         eigenvalue = eigenvalue_tmp
-            return eigenvalue, q
+            return eigenvalue.item()
 
         elif method == 'lanczos':
             # Lanczos iteration
@@ -382,15 +385,19 @@ class SRCutils(Optimizer):
                 delta_old = delta
                 delta = delta - lambda_ * f_grad_old
 
-
             print('Run iterations, cubic subsolver')
             # ToDo: too many iterations
 
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
                 if self.defaults['subproblem_solver'] == 'adaptive':
-                    # Update Lipschitz constant
-
+                    # Experimental, Nesterov’s accelerated gradient descent
+                    # Accelerated Gradient Descent Escapes Saddle Points
+                    # Faster than Gradient Descent
+                    if self.defaults['AccGD']:
+                        theta_acc = 1 / (4*np.sqrt(beta / np.sqrt(self.defaults['grad_tol']*self.defaults['sigma'])))
+                        v_t = delta - delta_old
+                        delta = delta + (1 - theta_acc) * v_t
                     # Update lambda
                     lambda_old = lambda_
                     f_grad_new = self.m_grad(g_, delta)

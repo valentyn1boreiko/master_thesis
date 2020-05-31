@@ -24,17 +24,16 @@ class SRC(utils.SRCutils):
         delta, delta_m = self.cubic_subsolver()
 
         # Momentun, experimental
-        self.t += 1
-        print('delta', delta)
-        self.m = self.b_1 * self.m + (1 - self.b_1) * delta
-        self.v = self.b_2 * self.v + (1 - self.b_2) * delta**2
-        m_hat = self.m / (1 - self.b_1**self.t)
-        v_hat = self.v / (1 - self.b_2**self.t)
-        delta = 0.001 * (m_hat / (torch.sqrt(v_hat) + self.epsilon))
+        if self.defaults['delta_momentum']:
+            self.t += 1
+            print('delta', delta)
+            self.m = self.b_1 * self.m + (1 - self.b_1) * delta
+            self.v = self.b_2 * self.v + (1 - self.b_2) * delta**2
+            m_hat = self.m / (1 - self.b_1**self.t)
+            v_hat = self.v / (1 - self.b_2**self.t)
+            delta = self.defaults['delta_momentum_stepsize'] \
+                * (m_hat / (torch.sqrt(v_hat) + self.epsilon))
 
-        print('Model update', self.m, self.v)
-        print('hats', m_hat, v_hat)
-        print('delta after', delta)
         self.model_update(delta, delta_m)
         self.samples_seen[-1] += self.get_num_points() + self.get_num_points('hessian')
 

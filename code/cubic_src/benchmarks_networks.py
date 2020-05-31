@@ -155,7 +155,7 @@ def main():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=0.4, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
                         help='learning rate (default: 1.0)')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
@@ -215,10 +215,10 @@ def main():
     optimizers = {'SGD': optim.SGD,
                   'Adam': optim.Adam}
 
-    optimizer = optimizers[optimizer_](model.parameters(), lr=args.lr)
+    optimizer = optimizers[optimizer_](model.parameters(), lr=args.lr, momentum=0.9)
     print(args)
     step_size = 1
-    optimizer.f_name = 'fig/' + network_to_use \
+    optimizer.f_name = 'fig/momentum_' + network_to_use \
                       + '_' + optimizer_ \
                       + '_' + str(args.lr) + '_' \
                       + str(args.test_batch_size) + '_' \
