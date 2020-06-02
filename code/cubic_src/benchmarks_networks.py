@@ -71,7 +71,7 @@ def to_img(x):
     return x
 
 
-def train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use):
+def train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis):
     model.train()
 
     for batch_idx, (data, target) in enumerate(train_loader):
@@ -89,11 +89,12 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
         if batch_idx * len(data) % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item()))
-            test(model, device, test_loader, optimizer, batch_idx * len(data), args.log_interval, criterion, network_to_use)
+                       100. * batch_idx / len(train_loader), loss.item()))
+            test(model, device, test_loader, optimizer, batch_idx * len(data), args.log_interval, criterion,
+                 network_to_use, x_axis)
 
 
-def test(model, device, test_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use):
+def test(model, device, test_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use, x_axis):
     model.eval()
     test_loss = 0
     correct = 0
@@ -114,7 +115,6 @@ def test(model, device, test_loader, optimizer, samples_seen_, log_interval, cri
                 test_loss += criterion(output, target, reduction='sum').item()  # sum up batch loss
             elif is_AE:
                 test_loss += criterion(output, target).item() * n
-                print(n, test_loss)
             if is_CNN:
                 pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 correct += pred.eq(target.view_as(pred)).sum().item()
@@ -129,7 +129,10 @@ def test(model, device, test_loader, optimizer, samples_seen_, log_interval, cri
         print('\nTest set: Average loss: {:.4f}\n'.format(
             test_loss))
 
-    samples_seen = 0 if samples_seen_ == len(optimizer.samples_seen) == 0\
+    if x_axis == 'computations':
+        log_interval /= n
+
+    samples_seen = 0 if samples_seen_ == len(optimizer.samples_seen) == 0 \
         else optimizer.samples_seen[-1] + log_interval
 
     optimizer.samples_seen.append(samples_seen)
@@ -155,7 +158,7 @@ def main():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.3, metavar='LR',
                         help='learning rate (default: 1.0)')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
@@ -163,7 +166,7 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=batch_size, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=10*batch_size, metavar='N',
                         help='how many samples to wait before logging training status')
 
     parser.add_argument('--save-model', action='store_true', default=False,
@@ -177,16 +180,17 @@ def main():
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
     network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST
+    x_axis = 'computations'  # computations, samples_seen
 
     transforms_dict = {
         'CNN_MNIST': transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ]),
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ]),
         'AE_MNIST': transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.5,), (0.5,))
-                       ])
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
     }
 
     train_loader = torch.utils.data.DataLoader(
@@ -211,28 +215,31 @@ def main():
     model = models[network_to_use].to(device)
     criterion = criteria[network_to_use]
 
-    optimizer_ = 'SGD'
+    optimizer_ = 'Adagrad'
     optimizers = {'SGD': optim.SGD,
-                  'Adam': optim.Adam}
+                  'Adam': optim.Adam,
+                  'Adagrad': optim.Adagrad}
 
-    optimizer = optimizers[optimizer_](model.parameters(), lr=args.lr, momentum=0.9)
+    optimizer = optimizers[optimizer_](model.parameters(), lr=args.lr)
     print(args)
     step_size = 1
-    optimizer.f_name = 'fig/momentum_' + network_to_use \
-                      + '_' + optimizer_ \
-                      + '_' + str(args.lr) + '_' \
-                      + str(args.test_batch_size) + '_' \
-                      + str(args.batch_size) + '_' + str(step_size)
+    optimizer.f_name = 'fig/' \
+                       + '_' + x_axis \
+                       + '_' + network_to_use \
+                       + '_' + optimizer_ \
+                       + '_' + str(args.lr) + '_' \
+                       + str(args.test_batch_size) + '_' \
+                       + str(args.batch_size) + '_' + str(step_size)
     print('Saving in:', optimizer.f_name)
     optimizer.samples_seen = []
     optimizer.losses = []
 
     scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
 
-    test(model, device, test_loader, optimizer, 0, args.log_interval, criterion, network_to_use)
+    test(model, device, test_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)
     for epoch in range(1, args.epochs + 1):
-        train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use)
-        #test(model, device, test_loader)
+        train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis)
+        # test(model, device, test_loader)
         scheduler.step()
 
     if args.save_model:

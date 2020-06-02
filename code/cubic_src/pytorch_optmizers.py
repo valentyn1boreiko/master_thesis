@@ -21,6 +21,7 @@ class SRC(utils.SRCutils):
             loss = closure()
 
         print('Cubic subsolver')
+        self.first_hv = True
         delta, delta_m = self.cubic_subsolver()
 
         # Momentun, experimental

@@ -54,7 +54,7 @@ def index_to_params(idx, params_):
 
 
 class SRCutils(Optimizer):
-    def __init__(self, params, adaptive_rho=True,
+    def __init__(self, params, adaptive_rho=False,
                  batchsize_mode='fixed', opt=None):
 
         if opt is None:
@@ -70,6 +70,8 @@ class SRCutils(Optimizer):
         self.test_losses = []
         self.step_old = None
 
+        self.first_hv = True
+
         # Momentum, experimental
         self.b_1 = 0.9
         self.b_2 = 0.999
@@ -78,23 +80,24 @@ class SRCutils(Optimizer):
         self.t = 0
         self.epsilon = 1e-08
 
-        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function
+        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 / 6),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.01 / 6),
                              sample_size_gradient=opt.get('sample_size_gradient', 0.01 / 6),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
-                             gamma=opt.get('penalty_increase_decrease_multiplier', 2.),
-                             sigma=opt.get('initial_penalty_parameter', 16.),
+                             gamma=opt.get('penalty_increase_decrease_multiplier', 2),  # 2
+                             sigma=opt.get('initial_penalty_parameter', 0.1),  # 16
                              n_epochs=opt.get('n_epochs', 14),
                              target=None,
                              log_interval=opt.get('log_interval', 600),
                              delta_momentum=opt.get('delta_momentum', True),
-                             delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.001),
+                             delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
+                             innerAdam=opt.get('innerAdam', True)
                              )
 
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
@@ -102,10 +105,15 @@ class SRCutils(Optimizer):
         self.is_mnist = self.defaults['problem'] == 'MNIST'
         self.is_AE = self.defaults['problem'] == 'AE'
 
-        self.f_name = 'fig/loss_momentum_0.005_' + self.defaults['problem'] \
+        self.f_name = 'fig/loss_computations_5iter_innerAdam' \
+                      + '_' + str(self.defaults['delta_momentum']) \
+                      + '_' + str(self.defaults['sigma']) \
+                      + '_' + str(self.defaults['delta_momentum_stepsize']) \
+                      + '_' + self.defaults['problem'] \
                       + '_' + self.defaults['subproblem_solver'] \
                       + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
                       + '_' + str(self.defaults['sample_size_gradient'] * self.n)
+
         print('Saving in:', self.f_name)
         super(SRCutils, self).__init__(params, self.defaults)
 
@@ -211,7 +219,7 @@ class SRCutils(Optimizer):
         delta = -R_c * self.grad / grads_norm
         return delta
 
-    def get_eigen(self, H_bmm, matrix=None, maxIter=10, tol=1e-3, method='power'):
+    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='lanczos'):
         """
         compute the top eigenvalues of model parameters and
         the corresponding eigenvectors.
@@ -230,6 +238,7 @@ class SRCutils(Optimizer):
         if method == 'power':
             # Power iteration
             for _ in range(maxIter):
+                self.computations_done[-1] += 1
                 Hv = H_bmm(q)
                 eigenvalue_tmp = torch.dot(Hv, q)
                 Hv_norm = torch.norm(Hv)
@@ -256,6 +265,7 @@ class SRCutils(Optimizer):
             a_s = []
             b_s = []
             for _ in range(maxIter):
+                self.computations_done[-1] += 1
                 Hv = H_bmm(q)
                 a = torch.dot(Hv, q)
                 Hv -= (b * q_last + a * q)
@@ -338,6 +348,7 @@ class SRCutils(Optimizer):
                0.5 * self.hessian_vector_product(delta).t() @ delta + \
                self.defaults['sigma'] / 6 * delta.norm(p=2)
 
+
     def beta_adapt(self, f_grad_delta, delta_):
         return (f_grad_delta).norm(p=2) \
                / (delta_).norm(p=2)
@@ -358,7 +369,8 @@ class SRCutils(Optimizer):
             self.case_n = 1
             # Get the Cauchy point
             delta = self.cauchy_point(grad_norm)
-            self.computations_done[-1] += self.get_num_points() + self.get_num_points('hessian')
+            #self.computations_done[-1] += self.get_num_points() + self.get_num_points('hessian')
+            self.computations_done[-1] += 1 + 1
             print('delta_m ', self.m_delta(delta))
         else:
             self.case_n = 2
@@ -375,7 +387,7 @@ class SRCutils(Optimizer):
             unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
             g_ = self.m_grad(self.grad, delta) + unif_sphere
             print('sphere random sample is generated')
-            T_eps = int(beta / (np.sqrt(self.defaults['sigma'] * self.defaults['grad_tol'])))
+            T_eps = 5 #int(beta / (np.sqrt(self.defaults['sigma'] * self.defaults['grad_tol'])))
             if self.defaults['subproblem_solver'] == 'adaptive':
                 # We know Lipschitz constant
                 lambda_ = 1 / beta
@@ -388,6 +400,9 @@ class SRCutils(Optimizer):
             print('Run iterations, cubic subsolver')
             # ToDo: too many iterations
 
+            if self.defaults['innerAdam']:
+                m = 0
+                v = 0
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
                 if self.defaults['subproblem_solver'] == 'adaptive':
@@ -401,6 +416,12 @@ class SRCutils(Optimizer):
                     # Update lambda
                     lambda_old = lambda_
                     f_grad_new = self.m_grad(g_, delta)
+                    if self.defaults['innerAdam']:
+                        m = self.b_1 * m + (1 - self.b_1) * f_grad_new
+                        v = self.b_2 * v + (1 - self.b_2) * f_grad_new ** 2
+                        m_hat = m / (1 - self.b_1 ** (i+1))
+                        v_hat = v / (1 - self.b_2 ** (i+1))
+
                     f_grad_delta = f_grad_new - f_grad_old
                     f_grad_old = f_grad_new
                     #beta_k = self.beta_adapt(f_grad_delta, delta - delta_old).detach().numpy()
@@ -413,7 +434,10 @@ class SRCutils(Optimizer):
 
                     #print('lambdas ', lambda_old, lambda_)
                     old_delta = delta
-                    delta = delta - lambda_ * f_grad_new
+                    if self.defaults['innerAdam']:
+                        delta = delta - lambda_ * (m_hat / (torch.sqrt(v_hat) + self.epsilon))
+                    else:
+                        delta = delta - lambda_ * f_grad_new
                     print('lambdas ', lambda_, lambda_old, (delta - delta_old).norm(p=2))
                     if (delta - delta_old).norm(p=2) < 1e-3:
                         print('no improvement anymore')
@@ -437,8 +461,10 @@ class SRCutils(Optimizer):
                     )
                     print('delta_m = ', self.m_delta(delta))
 
-                self.computations_done[-1] += self.get_num_points('hessian')
-            self.computations_done[-1] += self.get_num_points()
+                #self.computations_done[-1] += self.get_num_points('hessian')
+                self.computations_done[-1] += 1
+            #self.computations_done[-1] += self.get_num_points()
+            self.computations_done[-1] += 1
         return delta, self.m_delta(delta)
 
     def cubic_final_subsolver(self):
@@ -475,12 +501,13 @@ class SRCutils(Optimizer):
                 delta -= eta * g_m
                 g_m = self.grad + \
                       self.hessian_vector_product(delta) + \
-                      (self.defaults['sigma'] / 2) * np.linalg.norm(delta, 2)
+                      (self.defaults['sigma'] / 2) * delta.norm(p=2)
 
         return delta
 
     def model_update(self, delta, delta_m):
 
+        """
         x = self.param_groups[0]['params']
 
         if self.is_matrix_completion:
@@ -519,8 +546,9 @@ class SRCutils(Optimizer):
             previous_f_ = self.model(x[0])
 
         params_old = flatten_tensor_list(self.get_grads_and_params()[1])
-        momentum_const = 0.9
+        """
         self.update_params(delta)
+        """
         x = self.param_groups[0]['params']
 
         if self.is_matrix_completion:
@@ -547,7 +575,7 @@ class SRCutils(Optimizer):
 
         # Momentum as in the paper
         # Z. Want et al. Cubic Regularization with Momentum for Nonconvex Optimization. AUAI, 2018.
-        if not self.is_matrix_completion and \
+        if False and not self.is_matrix_completion and \
                 self.step_old is not None and current_f < previous_f:
             grad_new, params_new = self.get_grads_and_params()
             params_new = flatten_tensor_list(params_new)
@@ -601,7 +629,9 @@ class SRCutils(Optimizer):
         else:
             # ToDo: fix problematic updates with small batch size and Cauchy - super risky!
             if self.case_n == 2 or function_decrease < 0:
-                self.update_params(-delta)
+                # Temp
+                if False and function_decrease < 0:
+                    self.update_params(-delta)
 
         # Update the penalty parameter rho (in the code it's sigma) if adaptive_rho = True.
         # It is so by default
@@ -616,7 +646,7 @@ class SRCutils(Optimizer):
                 if self.case_n == 2:
                     self.defaults['sigma'] = self.defaults['sigma'] * self.defaults['gamma']
                 print('Unsuccessful iteration', self.defaults['sigma'])
-
+        """
     def hessian_vector_product(self, v):
         """
         compute the hessian vector product of Hv, where
@@ -642,18 +672,20 @@ class SRCutils(Optimizer):
             if self.is_AE:
                 data = Variable(data.view(data.size(0), -1))
                 target = data
-
-        self.zero_grad()
+        if self.first_hv:
+            self.zero_grad()
         x = self.param_groups[0]['params']
 
         if self.is_matrix_completion:
             data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
-        elif self.is_mnist or self.is_AE:
+        elif (self.is_mnist or self.is_AE) and self.first_hv:
             self.loss_fn(self.model(data), target).backward(create_graph=True)
-        elif self.is_w_function:
+            self.first_hv = False
+        elif self.is_w_function and self.first_hv:
             self.model(x[0]).backward(create_graph=True)
             self.perturb()
+            self.first_hv = False
 
 
         gradsh, params = self.get_grads_and_params()

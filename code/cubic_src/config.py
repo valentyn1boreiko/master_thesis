@@ -72,7 +72,7 @@ def to_img(x):
     return x
 
 
-network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST
+network_to_use = 'CNN_MNIST'  # AE_MNIST, CNN_MNIST
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -122,9 +122,11 @@ opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
            log_interval=110,
-           subproblem_solver='non-adaptive',  # adaptive, non-adaptive
+           subproblem_solver='adaptive',  # adaptive, non-adaptive
            delta_momentum=True,
-           delta_momentum_stepsize=0.005)
+           delta_momentum_stepsize=0.001,
+           initial_penalty_parameter=15000
+           )
 
 #
 optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
