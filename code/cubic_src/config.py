@@ -123,10 +123,10 @@ opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
            log_interval=1,
-           subproblem_solver='non-adaptive',  # adaptive, non-adaptive
-           delta_momentum=False,
+           subproblem_solver='adaptive',  # adaptive, non-adaptive
+           delta_momentum=True,
            delta_momentum_stepsize=0.001,
-           initial_penalty_parameter=100,  # 15000
+           initial_penalty_parameter=15000,  # 15000
            verbose=True
            )
 

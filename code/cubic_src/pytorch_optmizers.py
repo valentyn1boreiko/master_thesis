@@ -31,6 +31,9 @@ class SRC(utils.SRCutils):
         if self.defaults['delta_momentum']:
             print('Memory before t', psutil.virtual_memory().used >> 20)
             self.t += 1
+            if self.t % self.defaults['momentum_schedule_linear_period'] == 0:
+                self.defaults['delta_momentum_stepsize'] *= self.defaults['momentum_schedule_linear_const']
+                print('delta stepsize', self.defaults['delta_momentum_stepsize'])
             print('delta', delta.detach())
             print('Memory before m', psutil.virtual_memory().used >> 20)
             self.m = (self.b_1 * self.m + (1 - self.b_1) * delta.detach()).detach()
@@ -46,6 +49,7 @@ class SRC(utils.SRCutils):
             print('Memory after delta', psutil.virtual_memory().used >> 20)
         
         print('Memory before update', psutil.virtual_memory().used >> 20)
+        self.delta_m_norm = delta_m.norm(p=2)
         self.model_update(delta, delta_m)
         del(self.params)
         del(self.grad)

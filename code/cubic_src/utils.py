@@ -111,6 +111,7 @@ class SRCutils(Optimizer):
         self.least_eig = None
         self.grad_norms = None
         self.step_old = None
+        self.delta_m_norm = None
 
         self.first_hv = True
 
@@ -136,12 +137,15 @@ class SRCutils(Optimizer):
                              n_epochs=opt.get('n_epochs', 14),
                              target=None,
                              log_interval=opt.get('log_interval', 600),
+                             plot_interval=opt.get('plot_interval', 5),
                              delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
                              innerAdam=opt.get('innerAdam', True),
                              verbose=opt.get('verbose', True),
-                             n_iter=opt.get('n_iter', 5)
+                             n_iter=opt.get('n_iter', 5),
+                             momentum_schedule_linear_const=opt.get('schedule_linear', 1.0), # scale the momentum step-size
+                             momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
 
         builtins.print = verbose_decorator_print(self.defaults['verbose'])(print)
@@ -150,9 +154,9 @@ class SRCutils(Optimizer):
         self.is_w_function = self.defaults['problem'] == 'w-function'
         self.is_mnist = self.defaults['problem'] == 'MNIST'
         self.is_AE = self.defaults['problem'] == 'AE'
-        mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-        os.mkdir(mydir)
-        self.f_name = mydir + '/loss_src' \
+        self.mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        os.mkdir(self.mydir)
+        self.f_name = self.mydir + '/loss_src' \
                       + '_' + str(self.defaults['delta_momentum']) \
                       + '_' + str(self.defaults['sigma']) \
                       + '_' + str(self.defaults['delta_momentum_stepsize']) \
@@ -162,7 +166,7 @@ class SRCutils(Optimizer):
                       + '_' + str(self.defaults['sample_size_gradient'] * self.n)
         blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess', 'train_loader_hess']
         settings_dict = dict([(key, val) for key, val in self.defaults.items() if key not in blacklist_keys])
-        json.dump(settings_dict, open(mydir + '/settings.json', 'w'))
+        json.dump(settings_dict, open(self.mydir + '/settings.json', 'w'))
 
         print('Saving in:', self.f_name)
         super(SRCutils, self).__init__(params, self.defaults)
@@ -191,35 +195,45 @@ class SRCutils(Optimizer):
         self.model.eval()
         correct, total, loss = (0, 0, 0)
 
-        for batch_idx_, (data_, target_) in enumerate(loader):
-            # Get Samples
-            n = len(data_)
-            if self.is_AE:
-                data_ = Variable(data_.view(data_.size(0), -1))
-                target_ = data_
-            data_ = data_.to(self.defaults['dev'])
-            target_ = target_.to(self.defaults['dev'])
-            outputs = self.model(data_)
-            if self.is_AE:
-                loss += self.loss_fn(outputs, target_).item() * n
-            else:
-                loss += self.loss_fn(outputs, target_, reduction='sum').item()
-            # Get prediction
-            _, predicted = torch.max(outputs.data, 1)
-            # Total number of labels
-            total += len(target_)
-            # Total correct predictions
-            if not self.is_AE:
-                correct += (predicted == target_).sum().detach()
-            del outputs
-            del predicted
+        with torch.no_grad():
+            for batch_idx_, (data_, target_) in enumerate(loader):
+                # Get Samples
+                n = len(data_)
+                if self.is_AE:
+                    data_ = Variable(data_.view(data_.size(0), -1))
+                    target_ = data_
+                    print('target_', data_)
+                data_ = data_.to(self.defaults['dev'])
+                target_ = target_.to(self.defaults['dev'])
+                outputs = self.model(data_)
+                if self.is_AE:
+                    loss += self.loss_fn(outputs, target_).item() * n
+                else:
+                    loss += self.loss_fn(outputs, target_, reduction='sum').item()
+                # Get prediction
+                _, predicted = torch.max(outputs.data, 1)
+                # Total number of labels
+                total += len(target_)
+                # Total correct predictions
+                if not self.is_AE:
+                    correct += (predicted == target_).sum().detach()
+                del predicted
+
+            img_ = config.to_img(outputs)[2].reshape(28, 28)
+            img_2 = config.to_img(outputs)[3].reshape(28, 28)
+
+            img_target = config.to_img(target_)[2].reshape(28, 28)
+            img_target_2 = config.to_img(target_)[3].reshape(28, 28)
+            del outputs, target_
+
+
 
         if not self.is_AE:
             acc = 100 * correct / total
         loss = loss / len(loader.dataset)
 
         print("All points {}".format(total))
-        return loss, (acc if not self.is_AE else None)
+        return loss, (acc if not self.is_AE else (img_, img_2, img_target, img_target_2))
 
     def print_acc(self, batch_size, epoch, batch_idx):
         #train_loss, train_acc = self.get_accuracy(train_loader)
@@ -229,8 +243,23 @@ class SRCutils(Optimizer):
         #                                                                                             test_loss,
         #                                                                                             test_acc))
 
-        if batch_idx * batch_size % self.defaults['log_interval'] == 0:
+        if batch_idx % self.defaults['log_interval'] == 0:
             test_loss, test_acc = self.get_accuracy(config.test_loader)
+            train_loss, train_acc = self.get_accuracy(config.train_loader)
+
+            if batch_idx % self.defaults['plot_interval'] == 0:
+                fig = plt.figure(figsize=(8, 8))
+                for i, _img in enumerate([test_acc, train_acc]):
+                    for j in range(len(_img)):
+                        fig.add_subplot(2, 2, j+1)
+                        plt.imshow(_img[j], cmap='gray')
+
+
+                    plt.savefig(self.mydir + '/' + str(epoch) + '_' +
+                                str(batch_idx * batch_size) + ('test' if i == 0 else 'train') + '.png')
+                    plt.clf()
+
+
             if not self.is_AE:
                 print(
                     "Epoch {} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch,
@@ -249,11 +278,14 @@ class SRCutils(Optimizer):
             #plt.plot(self.computations_done, self.test_losses, label='loss')
             #plt.legend()
             print('batch id', batch_idx)
+
             pd.DataFrame({'samples': [self.samples_seen],
                           'computations': [self.computations_done],
                           'losses': [self.test_losses],
+                          'train_losses': [train_loss],
                           'grad_norms': [self.grad_norms],
-                          'least_eig': [self.least_eig.cpu().item() if self.least_eig else None]
+                          'least_eig': [self.least_eig.cpu().item() if self.least_eig else None],
+                          'delta_m_norm': [self.delta_m_norm]
                           }).\
                 to_csv(self.f_name + '.csv',
                        header=self.first_entry,
@@ -273,7 +305,7 @@ class SRCutils(Optimizer):
         delta = -R_c * self.grad / grads_norm
         return delta.detach()
 
-    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='power', which='biggest'):
+    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='lanczos', which='biggest'):
         """
         compute the top eigenvalues of model parameters and
         the corresponding eigenvectors.
@@ -416,7 +448,7 @@ class SRCutils(Optimizer):
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim, norm = ', self.grad.size(), self.grad.norm(p=2), len(self.params))
         beta = np.sqrt(self.get_hessian_eigen().cpu())
-        self.least_eig = self.get_hessian_eigen(which='least', maxIter=4)
+        self.least_eig = self.get_hessian_eigen(which='least', maxIter=15)
         self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
         print('hessian eigenvalue is calculated', beta)
         grad_norm = self.grad.norm(p=2)

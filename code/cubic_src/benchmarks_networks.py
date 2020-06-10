@@ -37,6 +37,29 @@ class Net(nn.Module):
         output = F.log_softmax(x, dim=1)
         return output
 
+
+class AE_MNIST_torch(nn.Module):
+    def __init__(self):
+        super(AE_MNIST_torch, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(28 * 28, 128),
+            nn.ReLU(True),
+            nn.Linear(128, 64),
+            nn.ReLU(True), nn.Linear(64, 12), nn.ReLU(True), nn.Linear(12, 3))
+        self.decoder = nn.Sequential(
+            nn.Linear(3, 12),
+            nn.ReLU(True),
+            nn.Linear(12, 64),
+            nn.ReLU(True),
+            nn.Linear(64, 128),
+            nn.ReLU(True), nn.Linear(128, 28 * 28), nn.Tanh())
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+
 class AE_MNIST(nn.Module):
     def __init__(self):
         super(AE_MNIST, self).__init__()
@@ -88,17 +111,18 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
         loss.backward()
         optimizer.step()
         if batch_idx * len(data) % args.log_interval == 0:
+
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader), loss.item()))
-            test(model, device, test_loader, optimizer, batch_idx * len(data), args.log_interval, criterion,
+            test(model, device, test_loader, train_loader, optimizer, batch_idx * len(data), args.log_interval, criterion,
                  network_to_use, x_axis)
 
 
-def test(model, device, test_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use, x_axis):
+def test(model, device, test_loader, train_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use, x_axis):
     model.eval()
-    test_loss = 0
-    correct = 0
+    test_loss, train_loss = 0, 0
+    correct, train_correct = 0, 0
     is_CNN = network_to_use == 'CNN_MNIST'
     is_AE = network_to_use == 'AE_MNIST'
 
@@ -122,6 +146,43 @@ def test(model, device, test_loader, optimizer, samples_seen_, log_interval, cri
 
     test_loss /= len(test_loader.dataset)
 
+    _img = to_img(output)[2].reshape(28, 28)
+    _img_2 = to_img(output)[3].reshape(28, 28)
+
+    _img_target = to_img(target)[2].reshape(28, 28)
+    _img_target_2 = to_img(target)[3].reshape(28, 28)
+
+    test_img = (_img, _img_2, _img_target, _img_target_2)
+
+    with torch.no_grad():
+        for data, target in train_loader:
+            n = len(data)
+            data, target = data.to(device), target.to(device)
+
+            if network_to_use == 'AE_MNIST':
+                data = Variable(data.view(data.size(0), -1))
+                target = data
+
+            output = model(data)
+            if is_CNN:
+                train_loss += criterion(output, target, reduction='sum').item()  # sum up batch loss
+            elif is_AE:
+                train_loss += criterion(output, target).item() * n
+            if is_CNN:
+                pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+                train_correct += pred.eq(target.view_as(pred)).sum().item()
+
+    train_loss /= len(train_loader.dataset)
+
+    _img = to_img(output)[2].reshape(28, 28)
+    _img_2 = to_img(output)[3].reshape(28, 28)
+
+    _img_target = to_img(target)[2].reshape(28, 28)
+    _img_target_2 = to_img(target)[3].reshape(28, 28)
+
+
+    train_img = (_img, _img_2, _img_target, _img_target_2)
+
     if is_CNN:
         print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
             test_loss, correct, len(test_loader.dataset),
@@ -129,6 +190,17 @@ def test(model, device, test_loader, optimizer, samples_seen_, log_interval, cri
     elif is_AE:
         print('\nTest set: Average loss: {:.4f}\n'.format(
             test_loss))
+
+        if samples_seen_ / 100 % 5 == 0:
+            fig = plt.figure(figsize=(4, 8))
+            for i, _img in enumerate([test_img, train_img]):
+                for j in range(len(_img)):
+                    fig.add_subplot(2, 2, j + 1)
+                    plt.imshow(_img[j], cmap='gray')
+
+                plt.savefig(optimizer.f_name + '_' + str(samples_seen_ / 100)
+                            + '_' + ('test' if i == 0 else 'train') + '.png')
+                plt.clf()
 
 
     samples_seen = 0 if samples_seen_ == len(optimizer.samples_seen) == 0 \
@@ -145,7 +217,8 @@ def test(model, device, test_loader, optimizer, samples_seen_, log_interval, cri
     #plt.plot(optimizer.samples_seen, optimizer.losses)
     pd.DataFrame({'samples': [optimizer.samples_seen[-1]],
                   'computations': [optimizer.computations_done[-1]],
-                  'losses': [optimizer.losses[-1]]
+                  'losses': [optimizer.losses[-1]],
+                  'train_losses': [train_loss]
                   }). \
         to_csv(optimizer.f_name + '.csv',
                header=optimizer.first_entry,
@@ -166,7 +239,7 @@ def main():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=0.3, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',  # 0.3, 0.001
                         help='learning rate (default: 1.0)')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
@@ -175,6 +248,9 @@ def main():
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10*batch_size, metavar='N',
+                        help='how many samples to wait before logging training status')
+
+    parser.add_argument('--plot-interval', type=int, default=5, metavar='N',
                         help='how many samples to wait before logging training status')
 
     parser.add_argument('--save-model', action='store_true', default=False,
@@ -214,7 +290,7 @@ def main():
 
     print(len(list(train_loader)), len(list(test_loader)))
 
-    models = {'AE_MNIST': AE_MNIST(),
+    models = {'AE_MNIST': AE_MNIST(),  # AE_MNIST_torch, AE_MNIST
               'CNN_MNIST': Net()}
 
     criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
@@ -223,7 +299,7 @@ def main():
     model = models[network_to_use].to(device)
     criterion = criteria[network_to_use]
 
-    optimizer_ = 'SGD'
+    optimizer_ = 'Adam'
     optimizers = {'SGD': optim.SGD,
                   'Adam': optim.Adam,
                   'Adagrad': optim.Adagrad}
@@ -246,7 +322,7 @@ def main():
     optimizer.first_entry = True
     scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
 
-    test(model, device, test_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)
+    test(model, device, test_loader, train_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis)
         # test(model, device, test_loader)
