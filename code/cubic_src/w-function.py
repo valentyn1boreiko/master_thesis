@@ -46,10 +46,10 @@ opt = dict(model=model,
            problem='w-function',
            sample_size_hessian=0.3,  # 0.3
            sample_size_gradient=0.3,  # 0.3
-           subproblem_solver='non-adaptive',
-           initial_penalty_parameter=15000,  # 150
-           delta_momentum=False,
-           delta_momentum_stepsize=0.04)
+           subproblem_solver='adaptive',
+           initial_penalty_parameter=1500,  # 150, 1500
+           delta_momentum=True,
+           delta_momentum_stepsize=0.04)  # 0.04
 
 problem_type = 'non-convex'  # convex, non-convex
 max_iter = int(2e2)
@@ -117,6 +117,7 @@ for op_num in range(averaging_ops):
                     losses[i] = (losses[i] * op_num + loss_.item()) / (op_num + 1)
         if optimizer_type == 'SRC':
             optimizer.computations_done.append(optimizer.computations_done[-1])
+
         if op_num == 0 and i > 0:
             # Nr of gradient samples
             samples_seen.append(samples_seen[-1]
@@ -134,11 +135,12 @@ for op_num in range(averaging_ops):
         if to_plot == 'grad_norm':
             for p in optimizer.param_groups[0]['params']:
                 grad_norms.append(p.norm(p=2))
-
+        """
         if i == 2:
             plt.plot(optimizer.computations_done[:-1] if optimizer_type == 'SRC' else samples_seen,
                      losses if to_plot == 'loss' else grad_norms)
             plt.savefig(f_name + '.png')
+        """
         # Generate N(0, 1) perturbations of the gradient
         if optimizer_type == 'SRC':
             optimizer.perturb()
@@ -174,9 +176,17 @@ pd.DataFrame({'samples': samples_seen,
                index=None)
 
 if optimizer_type in ['Adam', 'SGD']:
-    plt.plot(list(np.array(samples_seen) / int(opt['sample_size_gradient'] * opt['n'])), losses if to_plot == 'loss' else grad_norms)
+    plt.plot(list(np.array(samples_seen) / int(opt['sample_size_gradient'] * opt['n'])),
+             losses if to_plot == 'loss' else grad_norms, label='loss')
 elif optimizer_type == 'SRC':
-    plt.plot(optimizer.computations_done[:-1], losses if to_plot == 'loss' else grad_norms)
+    plt.plot(optimizer.computations_done[:-1], losses if to_plot == 'loss' else grad_norms, label='loss')
+plt.legend()
+plt.savefig(f_name + '.png')
+plt.clf()
+if optimizer_type == 'SRC':
+    plt.plot(optimizer.computations_done[:-1], optimizer.grad_norms, label='grad_norms')
+    plt.plot(optimizer.computations_done[:-1], optimizer.least_eig, label='least_eig')
+    plt.legend()
+    plt.savefig(f_name + '_eig_norms_' + '.png')
 
 print('Saving in:', f_name)
-plt.savefig(f_name + '.png')

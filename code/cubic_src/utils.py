@@ -1,3 +1,5 @@
+import builtins
+import json
 import torch
 import time
 import numpy as np
@@ -8,10 +10,30 @@ from torch.optim.optimizer import Optimizer
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
+import os, datetime
 # Comment it out while using matrix_completion.py or w-function.py instead of train.py
 import config
 
+def lanczos_tridiag_to_diag(t_mat):
+    """
+    Given a num_init_vecs x num_batch x k x k tridiagonal matrix t_mat,
+    returns a num_init_vecs x num_batch x k set of eigenvalues
+    and a num_init_vecs x num_batch x k x k set of eigenvectors.
+
+    TODO: make the eigenvalue computations done in batch mode.
+    """
+    orig_device = t_mat.device
+    if t_mat.size(-1) < 32:
+        retr = torch.symeig(t_mat.cpu(), eigenvectors=True)
+    else:
+        retr = torch.symeig(t_mat, eigenvectors=True)
+
+    evals, evecs = retr
+    mask = evals.ge(0)
+    evecs = evecs * mask.type_as(evecs).unsqueeze(-2)
+    evals = evals.masked_fill_(~mask, 1)
+
+    return evals.to(orig_device), evecs.to(orig_device) 
 
 def init_train_loader(dataloader, train, sampling_scheme_name='fixed'):
     dataloader_args = dict(shuffle=True, batch_size=config.sampling_scheme[sampling_scheme_name], num_workers=4)
@@ -53,6 +75,24 @@ def index_to_params(idx, params_):
     return a, b
 
 
+def verbose_decorator_print(verbose):
+    '''filename is the file where output will be written'''
+    def wrap(func):
+        '''func is the function you are "overriding", i.e. wrapping'''
+        def wrapped_func(*args, **kwargs):
+            '''*args and **kwargs are the arguments supplied
+            to the overridden function'''
+            #use with statement to open, write to, and close the file safely
+
+            #now original function executed with its arguments as normal
+            if verbose:
+                return func(*args, **kwargs)
+            else:
+                pass
+        return wrapped_func
+    return wrap
+
+
 class SRCutils(Optimizer):
     def __init__(self, params, adaptive_rho=False,
                  batchsize_mode='fixed', opt=None):
@@ -65,9 +105,11 @@ class SRCutils(Optimizer):
         self.case_n = 1
         self.n = opt['n']
         self.grad, self.params = None, None
-        self.samples_seen = [0]
-        self.computations_done = [0]
-        self.test_losses = []
+        self.samples_seen = 0
+        self.computations_done = 0
+        self.test_losses = 0
+        self.least_eig = None
+        self.grad_norms = None
         self.step_old = None
 
         self.first_hv = True
@@ -80,12 +122,12 @@ class SRCutils(Optimizer):
         self.t = 0
         self.epsilon = 1e-08
 
-        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function
+        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.01 / 6),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 / 6),
                              sample_size_gradient=opt.get('sample_size_gradient', 0.01 / 6),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
@@ -94,18 +136,23 @@ class SRCutils(Optimizer):
                              n_epochs=opt.get('n_epochs', 14),
                              target=None,
                              log_interval=opt.get('log_interval', 600),
-                             delta_momentum=opt.get('delta_momentum', True),
+                             delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
-                             innerAdam=opt.get('innerAdam', True)
+                             innerAdam=opt.get('innerAdam', False),
+                             verbose=opt.get('verbose', True),
+                             n_iter=opt.get('n_iter', 5)
                              )
 
+        builtins.print = verbose_decorator_print(self.defaults['verbose'])(print)
+        self.first_entry = True
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
         self.is_w_function = self.defaults['problem'] == 'w-function'
         self.is_mnist = self.defaults['problem'] == 'MNIST'
         self.is_AE = self.defaults['problem'] == 'AE'
-
-        self.f_name = 'fig/loss_computations_5iter_innerAdam' \
+        mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        os.mkdir(mydir)
+        self.f_name = mydir + '/loss_src' \
                       + '_' + str(self.defaults['delta_momentum']) \
                       + '_' + str(self.defaults['sigma']) \
                       + '_' + str(self.defaults['delta_momentum_stepsize']) \
@@ -113,6 +160,9 @@ class SRCutils(Optimizer):
                       + '_' + self.defaults['subproblem_solver'] \
                       + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
                       + '_' + str(self.defaults['sample_size_gradient'] * self.n)
+        blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess', 'train_loader_hess']
+        settings_dict = dict([(key, val) for key, val in self.defaults.items() if key not in blacklist_keys])
+        json.dump(settings_dict, open(mydir + '/settings.json', 'w'))
 
         print('Saving in:', self.f_name)
         super(SRCutils, self).__init__(params, self.defaults)
@@ -195,31 +245,35 @@ class SRCutils(Optimizer):
                                                         )
                 )
 
-            self.test_losses.append(test_loss)
-            plt.plot(self.computations_done, self.test_losses)
+            self.test_losses = test_loss
+            #plt.plot(self.computations_done, self.test_losses, label='loss')
+            #plt.legend()
             print('batch id', batch_idx)
-            pd.DataFrame({'samples': [self.samples_seen[-1]],
-                          'computations': [self.computations_done[-1]],
-                          'losses': [self.test_losses[-1]]
+            pd.DataFrame({'samples': [self.samples_seen],
+                          'computations': [self.computations_done],
+                          'losses': [self.test_losses],
+                          'grad_norms': [self.grad_norms],
+                          'least_eig': [self.least_eig.cpu().item() if self.least_eig else None]
                           }).\
                 to_csv(self.f_name + '.csv',
-                       header=(batch_idx == 0 and len(self.test_losses) == 1),
-                       mode='w' if (batch_idx == 0 and len(self.test_losses) == 1) else 'a',
+                       header=self.first_entry,
+                       mode='w' if self.first_entry else 'a',
                        index=None)
-            plt.savefig(self.f_name + '.png')
+            if self.first_entry:
+                self.first_entry = False
+            #plt.savefig(self.f_name + '.png')
+            #plt.clf()
             print('idx ', batch_idx, self.test_losses, self.samples_seen)
-            self.samples_seen.append(self.samples_seen[-1])
-            self.computations_done.append(self.computations_done[-1])
 
     def cauchy_point(self, grads_norm):
         # Compute Cauchy radius
         # ToDo: replace hessian-vec product with the upper bound (beta)
-        product = self.hessian_vector_product(self.grad).t() @ self.grad / (self.defaults['sigma'] * grads_norm ** 2)
+        product = self.hessian_vector_product(self.grad) @ self.grad / (self.defaults['sigma'] * grads_norm ** 2)
         R_c = -product + torch.sqrt(product ** 2 + 2 * grads_norm / self.defaults['sigma'])
         delta = -R_c * self.grad / grads_norm
-        return delta
+        return delta.detach()
 
-    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='lanczos'):
+    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='lanczos', which='biggest'):
         """
         compute the top eigenvalues of model parameters and
         the corresponding eigenvectors.
@@ -227,6 +281,7 @@ class SRCutils(Optimizer):
         # change the model to evaluation mode, otherwise the batch Normalization Layer will change.
         # If you call this function during training, remember to change the mode back to training mode.
         _, params = self.get_grads_and_params()
+
         if params:
             q = flatten_tensor_list([torch.randn(p.size(), device=p.device) for p in params])
         else:
@@ -265,7 +320,8 @@ class SRCutils(Optimizer):
             a_s = []
             b_s = []
             for _ in range(maxIter):
-                self.computations_done[-1] += 1
+                if which == 'biggest':
+                    self.computations_done += 1
                 Hv = H_bmm(q)
                 a = torch.dot(Hv, q)
                 Hv -= (b * q_last + a * q)
@@ -277,9 +333,11 @@ class SRCutils(Optimizer):
                 if b == 0:
                     break
                 q = Hv / b
-            eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
-
-            return max(abs(eigs))
+            #eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
+            a_s = torch.tensor(a_s).to(self.defaults['dev'])
+            b_s = torch.tensor(b_s[:-1]).to(self.defaults['dev'])
+            eigs, _ = lanczos_tridiag_to_diag(torch.diag_embed(a_s) + torch.diag_embed(b_s, offset=-1) + torch.diag_embed(b_s, offset=1))
+            return max(abs(eigs)) if which == 'biggest' else min(eigs)
 
     def get_hessian_eigen(self, **kwargs):
         H_bmm = lambda x: self.hessian_vector_product(x)
@@ -334,43 +392,45 @@ class SRCutils(Optimizer):
 
     def m(self, g_, x):
         delta_ = x - flatten_tensor_list(self.params)
-        return g_.t() @ delta_ + \
+        return (g_.t() @ delta_ + \
                0.5 * self.hessian_vector_product(delta_).t() @ delta_ + \
-               (self.defaults['sigma'] / 6) * delta_.norm(p=2) ** 3
+               (self.defaults['sigma'] / 6) * delta_.norm(p=2) ** 3).detach()
 
     def m_grad(self, g_, delta_):
-        return g_ + \
+        return (g_ + \
                self.hessian_vector_product(delta_) + \
-               (self.defaults['sigma'] / 2) * delta_.norm(p=2) * delta_
+               (self.defaults['sigma'] / 2) * delta_.norm(p=2) * delta_).detach()
 
     def m_delta(self, delta):
-        return self.grad.t() @ delta + \
-               0.5 * self.hessian_vector_product(delta).t() @ delta + \
-               self.defaults['sigma'] / 6 * delta.norm(p=2)
+        return (self.grad @ delta + \
+               0.5 * self.hessian_vector_product(delta) @ delta + \
+               self.defaults['sigma'] / 6 * delta.norm(p=2)).detach()
 
 
     def beta_adapt(self, f_grad_delta, delta_):
-        return (f_grad_delta).norm(p=2) \
-               / (delta_).norm(p=2)
+        return ((f_grad_delta).norm(p=2) \
+               / (delta_).norm(p=2)).detach()
 
     def cubic_subsolver(self):
 
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim, norm = ', self.grad.size(), self.grad.norm(p=2), len(self.params))
-        beta = np.sqrt(self.get_hessian_eigen())
+        beta = np.sqrt(self.get_hessian_eigen().cpu())
+        self.least_eig = self.get_hessian_eigen(which='least', maxIter=4)
+        self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
         print('hessian eigenvalue is calculated', beta)
         grad_norm = self.grad.norm(p=2)
-        print('grad norm ', grad_norm.detach().numpy(), beta ** 2 / self.defaults['sigma'])
+        print('grad norm ', grad_norm.detach().cpu().numpy(), beta ** 2 / self.defaults['sigma'])
 
         eps_ = 0.5
         r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
         # ToDo: Check this constant (now beta ** 2 is changed to beta)
-        if grad_norm.detach().numpy() >= beta ** 2 / self.defaults['sigma']:
+        if grad_norm.detach().cpu().numpy() >= beta.numpy() ** 2 / self.defaults['sigma']:
             self.case_n = 1
             # Get the Cauchy point
             delta = self.cauchy_point(grad_norm)
             #self.computations_done[-1] += self.get_num_points() + self.get_num_points('hessian')
-            self.computations_done[-1] += 1 + 1
+            self.computations_done += 1 + 1
             print('delta_m ', self.m_delta(delta))
         else:
             self.case_n = 2
@@ -387,7 +447,7 @@ class SRCutils(Optimizer):
             unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
             g_ = self.m_grad(self.grad, delta) + unif_sphere
             print('sphere random sample is generated')
-            T_eps = 5 #int(beta / (np.sqrt(self.defaults['sigma'] * self.defaults['grad_tol'])))
+            T_eps = self.defaults['n_iter'] #int(beta / (np.sqrt(self.defaults['sigma'] * self.defaults['grad_tol'])))
             if self.defaults['subproblem_solver'] == 'adaptive':
                 # We know Lipschitz constant
                 lambda_ = 1 / beta
@@ -428,8 +488,8 @@ class SRCutils(Optimizer):
                     #lambda_ = min(np.sqrt(1 + theta) * lambda_, 1 / (lambda_ * beta**2) + 1 / (2 * beta_k**2))
                     #print('params ', beta_k, (delta - delta_old).norm(p=2))
                     #print('deltas ', delta, delta_old, f_grad_delta)
-                    lambda_ = min(np.sqrt(1 + theta) * lambda_, (delta - delta_old).norm(p=2).detach().numpy() /
-                                 (2 * f_grad_delta.norm(p=2).detach().numpy()))
+                    lambda_ = min(np.sqrt(1 + theta) * lambda_, (delta - delta_old).norm(p=2).detach().cpu().numpy() /
+                                 (2 * f_grad_delta.norm(p=2).detach().cpu().numpy()))
                     delta_old = delta
 
                     #print('lambdas ', lambda_old, lambda_)
@@ -446,8 +506,8 @@ class SRCutils(Optimizer):
                     print('delta_m = ', self.m_delta(delta))
                     # Empirical rule
                     if self.is_AE or self.is_mnist:
-                        print(abs(self.m_delta(delta)), abs(self.test_losses[0]))
-                        if abs(self.m_delta(delta)) > abs(self.test_losses[0]) and i > 2:
+                        print(abs(self.m_delta(delta)), abs(self.test_losses))
+                        if abs(self.m_delta(delta)) > abs(self.test_losses) and i > 2:
                             print('delta_m has been increasing too much')
                             return delta, self.m_delta(delta)
                     else:
@@ -483,7 +543,7 @@ class SRCutils(Optimizer):
             theta = np.infty
             x = flatten_tensor_list(self.params) - lambda_ * self.grad
 
-        while g_m.norm(p=2).detach().numpy() > self.defaults['grad_tol'] / 2:
+        while g_m.norm(p=2).detach().cpu().numpy() > self.defaults['grad_tol'] / 2:
             if self.defaults['subproblem_solver'] == 'adaptive':
                 # Update Lipschitz constant
                 f_grad_new = self.m_grad(g_m, x)
@@ -492,7 +552,7 @@ class SRCutils(Optimizer):
 
                 # Update lambda
                 lambda_old = lambda_
-                lambda_ = min(np.sqrt(1 + theta) * lambda_, 1 / (lambda_ * beta.detach().numpy() ** 2))
+                lambda_ = min(np.sqrt(1 + theta) * lambda_, 1 / (lambda_ * beta.detach().cpu().numpy() ** 2))
                 delta -= lambda_ * f_grad_new
                 x -= lambda_ * f_grad_new
                 print('lambdas ', lambda_, lambda_old)
@@ -672,6 +732,10 @@ class SRCutils(Optimizer):
             if self.is_AE:
                 data = Variable(data.view(data.size(0), -1))
                 target = data
+
+        data = data.to(self.defaults['dev'])
+        target = target.to(self.defaults['dev'])
+
         if self.first_hv:
             self.zero_grad()
         x = self.param_groups[0]['params']

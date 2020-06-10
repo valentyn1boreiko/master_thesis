@@ -37,26 +37,27 @@ class Net(nn.Module):
         output = F.log_softmax(x, dim=1)
         return output
 
-
 class AE_MNIST(nn.Module):
     def __init__(self):
         super(AE_MNIST, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(28 * 28, 512),
-            nn.ReLU(True),
+            nn.Softplus(True),
             nn.Linear(512, 256),
-            nn.ReLU(True),
+            nn.Softplus(True),
             nn.Linear(256, 128),
-            nn.ReLU(True),
+            nn.Softplus(True),
             nn.Linear(128, 32)
         )
         self.decoder = nn.Sequential(
             nn.Linear(32, 128),
-            nn.ReLU(True),
+            nn.Softplus(True),
             nn.Linear(128, 256),
-            nn.ReLU(True),
+            nn.Softplus(True),
             nn.Linear(256, 512),
-            nn.ReLU(True), nn.Linear(512, 28 * 28), nn.Tanh())
+            nn.Softplus(True),
+            nn.Linear(512, 28 * 28),
+            nn.Tanh())
 
     def forward(self, x):
         x = self.encoder(x)
@@ -129,23 +130,30 @@ def test(model, device, test_loader, optimizer, samples_seen_, log_interval, cri
         print('\nTest set: Average loss: {:.4f}\n'.format(
             test_loss))
 
-    if x_axis == 'computations':
-        log_interval /= n
 
     samples_seen = 0 if samples_seen_ == len(optimizer.samples_seen) == 0 \
         else optimizer.samples_seen[-1] + log_interval
 
-    optimizer.samples_seen.append(samples_seen)
-    optimizer.losses.append(test_loss)
-    plt.plot(optimizer.samples_seen, optimizer.losses)
+    log_interval /= n
+
+    computations_done = 0 if samples_seen_ == len(optimizer.samples_seen) == 0 \
+        else optimizer.computations_done[-1] + log_interval
+    
+    optimizer.computations_done[-1] = computations_done
+    optimizer.samples_seen[-1] = samples_seen
+    optimizer.losses[-1] = test_loss
+    #plt.plot(optimizer.samples_seen, optimizer.losses)
     pd.DataFrame({'samples': [optimizer.samples_seen[-1]],
+                  'computations': [optimizer.computations_done[-1]],
                   'losses': [optimizer.losses[-1]]
                   }). \
         to_csv(optimizer.f_name + '.csv',
-               header=len(optimizer.losses) == 1,
-               mode='w' if len(optimizer.losses) == 1 else 'a',
+               header=optimizer.first_entry,
+               mode='w' if optimizer.first_entry else 'a',
                index=None)
-    plt.savefig(optimizer.f_name + '.png')
+    if optimizer.first_entry:
+        optimizer.first_entry = False
+    #plt.savefig(optimizer.f_name + '.png')
 
 
 def main():
@@ -215,7 +223,7 @@ def main():
     model = models[network_to_use].to(device)
     criterion = criteria[network_to_use]
 
-    optimizer_ = 'Adagrad'
+    optimizer_ = 'SGD'
     optimizers = {'SGD': optim.SGD,
                   'Adam': optim.Adam,
                   'Adagrad': optim.Adagrad}
@@ -231,9 +239,11 @@ def main():
                        + str(args.test_batch_size) + '_' \
                        + str(args.batch_size) + '_' + str(step_size)
     print('Saving in:', optimizer.f_name)
-    optimizer.samples_seen = []
-    optimizer.losses = []
+    optimizer.samples_seen = [0]
+    optimizer.losses = [0]
+    optimizer.computations_done = [0]
 
+    optimizer.first_entry = True
     scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
 
     test(model, device, test_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)

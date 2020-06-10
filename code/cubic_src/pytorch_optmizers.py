@@ -1,6 +1,8 @@
 import utils
 import numpy as np
 import torch
+import sys
+import psutil
 
 
 class SRC(utils.SRCutils):
@@ -22,21 +24,33 @@ class SRC(utils.SRCutils):
 
         print('Cubic subsolver')
         self.first_hv = True
+        print('Memory before subsolver', psutil.virtual_memory().used >> 20)
         delta, delta_m = self.cubic_subsolver()
-
+        print('Memory after subsolver', psutil.virtual_memory().used >> 20)
         # Momentun, experimental
         if self.defaults['delta_momentum']:
+            print('Memory before t', psutil.virtual_memory().used >> 20)
             self.t += 1
-            print('delta', delta)
-            self.m = self.b_1 * self.m + (1 - self.b_1) * delta
-            self.v = self.b_2 * self.v + (1 - self.b_2) * delta**2
-            m_hat = self.m / (1 - self.b_1**self.t)
-            v_hat = self.v / (1 - self.b_2**self.t)
-            delta = self.defaults['delta_momentum_stepsize'] \
-                * (m_hat / (torch.sqrt(v_hat) + self.epsilon))
-
+            print('delta', delta.detach())
+            print('Memory before m', psutil.virtual_memory().used >> 20)
+            self.m = (self.b_1 * self.m + (1 - self.b_1) * delta.detach()).detach()
+            print('Memory before v', psutil.virtual_memory().used >> 20)
+            self.v = (self.b_2 * self.v + (1 - self.b_2) * delta.detach()**2).detach()
+            print('Memory before m_hat', psutil.virtual_memory().used >> 20)
+            m_hat = (self.m / (1 - self.b_1**self.t)).detach()
+            print('Memory before v_hat', psutil.virtual_memory().used >> 20)
+            v_hat = (self.v / (1 - self.b_2**self.t)).detach()
+            print('Memory before delta', psutil.virtual_memory().used >> 20)
+            delta = (self.defaults['delta_momentum_stepsize'] \
+                * (m_hat / (torch.sqrt(v_hat) + self.epsilon))).detach()
+            print('Memory after delta', psutil.virtual_memory().used >> 20)
+        
+        print('Memory before update', psutil.virtual_memory().used >> 20)
         self.model_update(delta, delta_m)
-        self.samples_seen[-1] += self.get_num_points() + self.get_num_points('hessian')
+        del(self.params)
+        del(self.grad)
+        print('Memory after update', psutil.virtual_memory().used >> 20)
+        self.samples_seen += self.get_num_points() + self.get_num_points('hessian')
 
 
         # Check if we are doing enough progress

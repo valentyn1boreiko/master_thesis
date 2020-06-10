@@ -72,7 +72,7 @@ def to_img(x):
     return x
 
 
-network_to_use = 'CNN_MNIST'  # AE_MNIST, CNN_MNIST
+network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -115,17 +115,19 @@ if torch.cuda.is_available():
 else:
     dev = 'cpu'
 
+print('Using dev', dev)
 model = models[network_to_use].to(dev)
 
 # MNIST opt
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=110,
+           log_interval=1,
            subproblem_solver='adaptive',  # adaptive, non-adaptive
            delta_momentum=True,
            delta_momentum_stepsize=0.001,
-           initial_penalty_parameter=15000
+           initial_penalty_parameter=15000,
+           verbose=True
            )
 
 #
@@ -157,7 +159,7 @@ sampling_scheme = dict(fixed_grad=int(n * optimizer.defaults['sample_size_gradie
 def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_points_=None):
     n_points = n_points_ if n_points_ else sampling_scheme[sampling_scheme_name]
     print('Loaded ', n_points, 'data points')
-    dataloader_args = dict(shuffle=True, batch_size=n_points, num_workers=4)
+    dataloader_args = dict(shuffle=True, batch_size=n_points, num_workers=0)
     train_loader = dataloader_.DataLoader(train_, **dataloader_args)
     dataloader_args['batch_size'] = 1000
     return dataloader_args, train_loader
