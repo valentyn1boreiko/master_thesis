@@ -139,7 +139,7 @@ class SRCutils(Optimizer):
                              delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
-                             innerAdam=opt.get('innerAdam', False),
+                             innerAdam=opt.get('innerAdam', True),
                              verbose=opt.get('verbose', True),
                              n_iter=opt.get('n_iter', 5)
                              )
@@ -273,7 +273,7 @@ class SRCutils(Optimizer):
         delta = -R_c * self.grad / grads_norm
         return delta.detach()
 
-    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='lanczos', which='biggest'):
+    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='power', which='biggest'):
         """
         compute the top eigenvalues of model parameters and
         the corresponding eigenvectors.
@@ -290,10 +290,10 @@ class SRCutils(Optimizer):
 
         eigenvalue = None
 
-        if method == 'power':
+        if method == 'power' and which != 'biggest':
             # Power iteration
             for _ in range(maxIter):
-                self.computations_done[-1] += 1
+                self.computations_done += 1
                 Hv = H_bmm(q)
                 eigenvalue_tmp = torch.dot(Hv, q)
                 Hv_norm = torch.norm(Hv)
@@ -307,9 +307,9 @@ class SRCutils(Optimizer):
                         return eigenvalue_tmp.item()
                     else:
                         eigenvalue = eigenvalue_tmp
-            return eigenvalue.item()
+            return eigenvalue
 
-        elif method == 'lanczos':
+        elif method == 'lanczos' or which == 'biggest':
             # Lanczos iteration
             b = 0
             if params:
@@ -463,8 +463,10 @@ class SRCutils(Optimizer):
             if self.defaults['innerAdam']:
                 m = 0
                 v = 0
+            self.computations_done += 1
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
+                self.computations_done += 1
                 if self.defaults['subproblem_solver'] == 'adaptive':
                     # Experimental, Nesterov’s accelerated gradient descent
                     # Accelerated Gradient Descent Escapes Saddle Points
@@ -522,9 +524,7 @@ class SRCutils(Optimizer):
                     print('delta_m = ', self.m_delta(delta))
 
                 #self.computations_done[-1] += self.get_num_points('hessian')
-                self.computations_done[-1] += 1
             #self.computations_done[-1] += self.get_num_points()
-            self.computations_done[-1] += 1
         return delta, self.m_delta(delta)
 
     def cubic_final_subsolver(self):
