@@ -37,6 +37,32 @@ class Net(nn.Module):
         return output
 
 
+class CONV_AE_MNIST(nn.Module):
+    def __init__(self):
+        super(CONV_AE_MNIST, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 16, 3, stride=3, padding=1),  # b, 16, 10, 10
+            nn.Softplus(True),
+            nn.MaxPool2d(2, stride=2),  # b, 16, 5, 5
+            nn.Conv2d(16, 8, 3, stride=2, padding=1),  # b, 8, 3, 3
+            nn.Softplus(True),
+            nn.MaxPool2d(2, stride=1)  # b, 8, 2, 2
+        )
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(8, 16, 3, stride=2),  # b, 16, 5, 5
+            nn.Softplus(True),
+            nn.ConvTranspose2d(16, 8, 5, stride=3, padding=1),  # b, 8, 15, 15
+            nn.Softplus(True),
+            nn.ConvTranspose2d(8, 1, 2, stride=2, padding=1),  # b, 1, 28, 28
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+
 class AE_MNIST(nn.Module):
     def __init__(self):
         super(AE_MNIST, self).__init__()
@@ -72,7 +98,7 @@ def to_img(x):
     return x
 
 
-network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST
+network_to_use = 'CNN_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -82,13 +108,19 @@ transforms_dict = {
         'AE_MNIST': transforms.Compose([
                            transforms.ToTensor(),
                            transforms.Normalize((0.5,), (0.5,))
+                       ]),
+        'CONV_AE_MNIST': transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.5,), (0.5,))
                        ])
     }
 
 models = {'AE_MNIST': AE_MNIST(),
+          'CONV_AE_MNIST': CONV_AE_MNIST(),
           'CNN_MNIST': Net()}
 
 criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
+            'CONV_AE_MNIST': nn.MSELoss(reduction='mean'),
             'CNN_MNIST': F.nll_loss}
 
 # Loading the data
@@ -122,12 +154,16 @@ model = models[network_to_use].to(dev)
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=1,
+           log_interval=10,
            subproblem_solver='adaptive',  # adaptive, non-adaptive
-           delta_momentum=True,
-           delta_momentum_stepsize=0.001,
-           initial_penalty_parameter=15000,  # 15000
-           verbose=True
+           delta_momentum=False,
+           delta_momentum_stepsize=0.002,
+           initial_penalty_parameter=0.6,  # 15000, 10
+           verbose=True,
+           beta_lipschitz=1,
+           eta=0.3,
+           sample_size_hessian=100,
+           sample_size_gradient=100
            )
 
 #
@@ -144,12 +180,12 @@ optimizer.defaults['double_sample_size'] = False
 # Sampling schemes
 #exp_growth_constant_grad = ((1-optimizer.defaults['sample_size_gradient'])*n)**(1/optimizer.defaults['n_iterations'])
 
-sampling_scheme = dict(fixed_grad=int(n * optimizer.defaults['sample_size_gradient']),
+sampling_scheme = dict(fixed_grad=int(optimizer.defaults['sample_size_gradient']),
 
                        #exponential_grad=lambda iter_: int(
                        #    min(n, n * optimizer.defaults['sample_size_gradient'] +
                        #        exp_growth_constant_grad**(iter_ + 1))),
-                       fixed_hess=int(n * optimizer.defaults['sample_size_hessian']),
+                       fixed_hess=int(optimizer.defaults['sample_size_hessian']),
                        #exponential_hess=lambda iter_: int(
                        #    min(n, n * optimizer.defaults['sample_size_hessian'] +
                        #        exp_growth_constant_grad**(iter_ + 1))),

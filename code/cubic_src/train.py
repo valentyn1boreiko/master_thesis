@@ -3,11 +3,23 @@ from torch.autograd import Variable
 from config import *
 import gc
 import psutil
+import argparse
 from pympler.tracker import SummaryTracker
 import sys
 
 #torch.backends.cudnn.enabled = False
-
+"""
+parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+parser.add_argument('--sample-size-hessian', type=int, default=opt['sample_size_hessian'], metavar='N',  
+                        help='input batch size for hessian (default: 300)')
+parser.add_argument('--sample-size-gradient', type=int, default=opt['sample_size_gradient'], metavar='N', 
+                        help='input batch size for gradient (default: 300)')
+parser.add_argument('--delta-momentum-stepsize', type=float, default=opt['delta_momentum_stepsize'], metavar='LR', 
+                        help='momentum stepsize (default: 0.002)')
+parser.add_argument('--log-interval', type=int, default=opt['log_interval'], metavar='N',
+                        help='how many samples to wait before logging training status')
+args = parser.parse_args()
+"""
 
 def sizeof_fmt(num, suffix='B'):
     for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
@@ -58,7 +70,8 @@ for epoch in range(optimizer.defaults['n_epochs']):
         print('Train data size ', data.size())
         optimizer.zero_grad()
         print('Memory used zero_grad: ', psutil.virtual_memory().used >> 20)
-        loss_fn(model(data), target).backward(create_graph=True)
+        outputs = model(data)
+        loss_fn(outputs, target).backward(create_graph=True)
         print('Memory used loss: ', psutil.virtual_memory().used >> 20)
         optimizer.defaults['train_data'] = data
         optimizer.defaults['target'] = target

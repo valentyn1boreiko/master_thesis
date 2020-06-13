@@ -14,6 +14,7 @@ import os, datetime
 # Comment it out while using matrix_completion.py or w-function.py instead of train.py
 import config
 
+
 def lanczos_tridiag_to_diag(t_mat):
     """
     Given a num_init_vecs x num_batch x k x k tridiagonal matrix t_mat,
@@ -123,17 +124,19 @@ class SRCutils(Optimizer):
         self.t = 0
         self.epsilon = 1e-08
 
-        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function
+        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
-                             sample_size_hessian=opt.get('sample_size_hessian', 0.001 / 6),
-                             sample_size_gradient=opt.get('sample_size_gradient', 0.01 / 6),
+                             sample_size_hessian=opt.get('sample_size_hessian', 0.03 / 6),
+                             sample_size_gradient=opt.get('sample_size_gradient', 0.03 / 6),
                              eta_1=opt.get('success_treshold', 0.1),
                              eta_2=opt.get('very_success_treshold', 0.9),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2),  # 2
                              sigma=opt.get('initial_penalty_parameter', 0.1),  # 16
+                             beta_lipschitz=opt.get('beta_lipschitz', None),
+                             eta=opt.get('eta', None),
                              n_epochs=opt.get('n_epochs', 14),
                              target=None,
                              log_interval=opt.get('log_interval', 600),
@@ -141,10 +144,10 @@ class SRCutils(Optimizer):
                              delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
-                             innerAdam=opt.get('innerAdam', True),
+                             innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', True),
-                             n_iter=opt.get('n_iter', 5),
-                             momentum_schedule_linear_const=opt.get('schedule_linear', 1.0), # scale the momentum step-size
+                             n_iter=opt.get('n_iter', 100),
+                             momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
 
@@ -162,8 +165,8 @@ class SRCutils(Optimizer):
                       + '_' + str(self.defaults['delta_momentum_stepsize']) \
                       + '_' + self.defaults['problem'] \
                       + '_' + self.defaults['subproblem_solver'] \
-                      + '_' + str(self.defaults['sample_size_hessian'] * self.n) \
-                      + '_' + str(self.defaults['sample_size_gradient'] * self.n)
+                      + '_' + str(self.defaults['sample_size_hessian']) \
+                      + '_' + str(self.defaults['sample_size_gradient'])
         blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess', 'train_loader_hess']
         settings_dict = dict([(key, val) for key, val in self.defaults.items() if key not in blacklist_keys])
         json.dump(settings_dict, open(self.mydir + '/settings.json', 'w'))
@@ -189,7 +192,7 @@ class SRCutils(Optimizer):
             return hv
 
     def get_num_points(self, type_='gradient'):
-        return int(self.n * self.defaults['sample_size_' + type_])
+        return int(self.defaults['sample_size_' + type_])
 
     def get_accuracy(self, loader):
         self.model.eval()
@@ -202,7 +205,6 @@ class SRCutils(Optimizer):
                 if self.is_AE:
                     data_ = Variable(data_.view(data_.size(0), -1))
                     target_ = data_
-                    print('target_', data_)
                 data_ = data_.to(self.defaults['dev'])
                 target_ = target_.to(self.defaults['dev'])
                 outputs = self.model(data_)
@@ -218,12 +220,12 @@ class SRCutils(Optimizer):
                 if not self.is_AE:
                     correct += (predicted == target_).sum().detach()
                 del predicted
+            if self.is_AE:
+                img_ = config.to_img(outputs)[2].reshape(28, 28)
+                img_2 = config.to_img(outputs)[3].reshape(28, 28)
 
-            img_ = config.to_img(outputs)[2].reshape(28, 28)
-            img_2 = config.to_img(outputs)[3].reshape(28, 28)
-
-            img_target = config.to_img(target_)[2].reshape(28, 28)
-            img_target_2 = config.to_img(target_)[3].reshape(28, 28)
+                img_target = config.to_img(target_)[2].reshape(28, 28)
+                img_target_2 = config.to_img(target_)[3].reshape(28, 28)
             del outputs, target_
 
 
@@ -247,17 +249,18 @@ class SRCutils(Optimizer):
             test_loss, test_acc = self.get_accuracy(config.test_loader)
             train_loss, train_acc = self.get_accuracy(config.train_loader)
 
-            if batch_idx % self.defaults['plot_interval'] == 0:
-                fig = plt.figure(figsize=(8, 8))
-                for i, _img in enumerate([test_acc, train_acc]):
-                    for j in range(len(_img)):
-                        fig.add_subplot(2, 2, j+1)
-                        plt.imshow(_img[j], cmap='gray')
+            if self.is_AE:
+                if batch_idx % self.defaults['plot_interval'] == 0:
+                    fig = plt.figure(figsize=(8, 8))
+                    for i, _img in enumerate([test_acc, train_acc]):
+                        for j in range(len(_img)):
+                            fig.add_subplot(2, 2, j+1)
+                            plt.imshow(_img[j], cmap='gray')
 
 
-                    plt.savefig(self.mydir + '/' + str(epoch) + '_' +
-                                str(batch_idx * batch_size) + ('test' if i == 0 else 'train') + '.png')
-                    plt.clf()
+                        plt.savefig(self.mydir + '/' + str(epoch) + '_' +
+                                    str(batch_idx * batch_size) + ('test' if i == 0 else 'train') + '.png')
+                        plt.clf()
 
 
             if not self.is_AE:
@@ -284,7 +287,7 @@ class SRCutils(Optimizer):
                           'losses': [self.test_losses],
                           'train_losses': [train_loss],
                           'grad_norms': [self.grad_norms],
-                          'least_eig': [self.least_eig.cpu().item() if self.least_eig else None],
+                          'least_eig': [self.least_eig if self.least_eig else None],
                           'delta_m_norm': [self.delta_m_norm]
                           }).\
                 to_csv(self.f_name + '.csv',
@@ -305,7 +308,7 @@ class SRCutils(Optimizer):
         delta = -R_c * self.grad / grads_norm
         return delta.detach()
 
-    def get_eigen(self, H_bmm, matrix=None, maxIter=3, tol=1e-3, method='lanczos', which='biggest'):
+    def get_eigen(self, H_bmm, matrix=None, maxIter=5, tol=1e-3, method='lanczos', which='biggest'):
         """
         compute the top eigenvalues of model parameters and
         the corresponding eigenvectors.
@@ -322,7 +325,7 @@ class SRCutils(Optimizer):
 
         eigenvalue = None
 
-        if method == 'power' and which != 'biggest':
+        if method == 'power' and which != 'least':
             # Power iteration
             for _ in range(maxIter):
                 self.computations_done += 1
@@ -341,7 +344,7 @@ class SRCutils(Optimizer):
                         eigenvalue = eigenvalue_tmp
             return eigenvalue
 
-        elif method == 'lanczos' or which == 'biggest':
+        elif method == 'lanczos' or which == 'least':
             # Lanczos iteration
             b = 0
             if params:
@@ -365,10 +368,10 @@ class SRCutils(Optimizer):
                 if b == 0:
                     break
                 q = Hv / b
-            #eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
-            a_s = torch.tensor(a_s).to(self.defaults['dev'])
-            b_s = torch.tensor(b_s[:-1]).to(self.defaults['dev'])
-            eigs, _ = lanczos_tridiag_to_diag(torch.diag_embed(a_s) + torch.diag_embed(b_s, offset=-1) + torch.diag_embed(b_s, offset=1))
+            eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
+            #a_s = torch.tensor(a_s).to(self.defaults['dev'])
+            #b_s = torch.tensor(b_s[:-1]).to(self.defaults['dev'])
+            #eigs, _ = lanczos_tridiag_to_diag(torch.diag_embed(a_s) + torch.diag_embed(b_s, offset=-1) + torch.diag_embed(b_s, offset=1))
             return max(abs(eigs)) if which == 'biggest' else min(eigs)
 
     def get_hessian_eigen(self, **kwargs):
@@ -447,8 +450,9 @@ class SRCutils(Optimizer):
 
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim, norm = ', self.grad.size(), self.grad.norm(p=2), len(self.params))
-        beta = np.sqrt(self.get_hessian_eigen().cpu())
-        self.least_eig = self.get_hessian_eigen(which='least', maxIter=15)
+        beta = self.defaults.get('beta_lipschitz') if self.defaults.get('beta_lipschitz') is not None\
+            else np.sqrt(self.get_hessian_eigen())
+        self.least_eig = self.get_hessian_eigen(which='least', maxIter=5)
         self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
         print('hessian eigenvalue is calculated', beta)
         grad_norm = self.grad.norm(p=2)
@@ -457,7 +461,7 @@ class SRCutils(Optimizer):
         eps_ = 0.5
         r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
         # ToDo: Check this constant (now beta ** 2 is changed to beta)
-        if grad_norm.detach().cpu().numpy() >= beta.numpy() ** 2 / self.defaults['sigma']:
+        if grad_norm >= beta ** 2 / self.defaults['sigma']:
             self.case_n = 1
             # Get the Cauchy point
             delta = self.cauchy_point(grad_norm)
@@ -473,7 +477,8 @@ class SRCutils(Optimizer):
             # ToDo: scale sigma with 1/2
             delta = torch.zeros(self.grad.size())
             sigma_ = (self.defaults['sigma'] ** 2 * r ** 3 * eps_) / (144 * (beta + 2 * self.defaults['sigma'] * r))
-            eta = 1 / (20 * beta)
+            eta = self.defaults.get('eta') if self.defaults.get('eta') is not None \
+                else 1 / (20 * beta)
 
             print('generating sphere random sample, dim = ', self.grad.size()[0])
             unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
@@ -776,7 +781,8 @@ class SRCutils(Optimizer):
             data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
         elif (self.is_mnist or self.is_AE) and self.first_hv:
-            self.loss_fn(self.model(data), target).backward(create_graph=True)
+            outputs = self.model(data)
+            self.loss_fn(outputs, target).backward(create_graph=True)
             self.first_hv = False
         elif self.is_w_function and self.first_hv:
             self.model(x[0]).backward(create_graph=True)

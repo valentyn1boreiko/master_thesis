@@ -8,6 +8,7 @@ from torch.autograd import Variable
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 import matplotlib.pyplot as plt
+import datetime
 import pandas as pd
 import os
 
@@ -110,11 +111,11 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
         loss = criterion(output, target)
         loss.backward()
         optimizer.step()
-        if batch_idx * len(data) % args.log_interval == 0:
-
+        if batch_idx * len(data) % args.log_interval == 0 and batch_idx != 0:
+            print('batch idx', batch_idx)
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                       100. * batch_idx / len(train_loader), loss.item()))
+                       10. * batch_idx / len(train_loader), loss.item()))
             test(model, device, test_loader, train_loader, optimizer, batch_idx * len(data), args.log_interval, criterion,
                  network_to_use, x_axis)
 
@@ -146,13 +147,14 @@ def test(model, device, test_loader, train_loader, optimizer, samples_seen_, log
 
     test_loss /= len(test_loader.dataset)
 
-    _img = to_img(output)[2].reshape(28, 28)
-    _img_2 = to_img(output)[3].reshape(28, 28)
+    if is_AE:
+        _img = to_img(output)[2].reshape(28, 28)
+        _img_2 = to_img(output)[3].reshape(28, 28)
 
-    _img_target = to_img(target)[2].reshape(28, 28)
-    _img_target_2 = to_img(target)[3].reshape(28, 28)
+        _img_target = to_img(target)[2].reshape(28, 28)
+        _img_target_2 = to_img(target)[3].reshape(28, 28)
 
-    test_img = (_img, _img_2, _img_target, _img_target_2)
+        test_img = (_img, _img_2, _img_target, _img_target_2)
 
     with torch.no_grad():
         for data, target in train_loader:
@@ -174,14 +176,15 @@ def test(model, device, test_loader, train_loader, optimizer, samples_seen_, log
 
     train_loss /= len(train_loader.dataset)
 
-    _img = to_img(output)[2].reshape(28, 28)
-    _img_2 = to_img(output)[3].reshape(28, 28)
+    if is_AE:
+        _img = to_img(output)[2].reshape(28, 28)
+        _img_2 = to_img(output)[3].reshape(28, 28)
 
-    _img_target = to_img(target)[2].reshape(28, 28)
-    _img_target_2 = to_img(target)[3].reshape(28, 28)
+        _img_target = to_img(target)[2].reshape(28, 28)
+        _img_target_2 = to_img(target)[3].reshape(28, 28)
 
 
-    train_img = (_img, _img_2, _img_target, _img_target_2)
+        train_img = (_img, _img_2, _img_target, _img_target_2)
 
     if is_CNN:
         print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
@@ -191,24 +194,24 @@ def test(model, device, test_loader, train_loader, optimizer, samples_seen_, log
         print('\nTest set: Average loss: {:.4f}\n'.format(
             test_loss))
 
-        if samples_seen_ / 100 % 5 == 0:
+        if samples_seen_ % 5 * log_interval == 0:
             fig = plt.figure(figsize=(4, 8))
             for i, _img in enumerate([test_img, train_img]):
                 for j in range(len(_img)):
                     fig.add_subplot(2, 2, j + 1)
                     plt.imshow(_img[j], cmap='gray')
 
-                plt.savefig(optimizer.f_name + '_' + str(samples_seen_ / 100)
+                plt.savefig(optimizer.f_name + '_' + str(samples_seen_)
                             + '_' + ('test' if i == 0 else 'train') + '.png')
                 plt.clf()
 
-
-    samples_seen = 0 if samples_seen_ == len(optimizer.samples_seen) == 0 \
+    samples_seen = 0 if optimizer.first_entry \
         else optimizer.samples_seen[-1] + log_interval
 
+    # How many batches went through, i.e., how many computations were done
     log_interval /= n
 
-    computations_done = 0 if samples_seen_ == len(optimizer.samples_seen) == 0 \
+    computations_done = 0 if optimizer.first_entry \
         else optimizer.computations_done[-1] + log_interval
     
     optimizer.computations_done[-1] = computations_done
@@ -247,10 +250,10 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=10*batch_size, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=10 * batch_size, metavar='N',
                         help='how many samples to wait before logging training status')
 
-    parser.add_argument('--plot-interval', type=int, default=5, metavar='N',
+    parser.add_argument('--plot-interval', type=int, default=500, metavar='N',
                         help='how many samples to wait before logging training status')
 
     parser.add_argument('--save-model', action='store_true', default=False,
@@ -263,7 +266,7 @@ def main():
     device = torch.device("cuda" if use_cuda else "cpu")
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
-    network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST
+    network_to_use = 'CNN_MNIST'  # AE_MNIST, CNN_MNIST
     x_axis = 'computations'  # computations, samples_seen
 
     transforms_dict = {
@@ -307,26 +310,34 @@ def main():
     optimizer = optimizers[optimizer_](model.parameters(), lr=args.lr)
     print(args)
     step_size = 1
-    optimizer.f_name = 'fig/' \
-                       + '_' + x_axis \
+    scheduler = False
+    mydir = os.path.join(os.getcwd(), 'fig',
+                         'benchmarks_networks_' + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    os.mkdir(mydir)
+    optimizer.f_name = mydir \
+                       + '/' + x_axis \
                        + '_' + network_to_use \
                        + '_' + optimizer_ \
                        + '_' + str(args.lr) + '_' \
                        + str(args.test_batch_size) + '_' \
-                       + str(args.batch_size) + '_' + str(step_size)
+                       + str(args.batch_size) \
+                       + '_' + str(step_size) \
+                       + '_scheduler=' + str(scheduler)
     print('Saving in:', optimizer.f_name)
     optimizer.samples_seen = [0]
     optimizer.losses = [0]
     optimizer.computations_done = [0]
 
     optimizer.first_entry = True
-    scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
+    if scheduler:
+        scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
 
     test(model, device, test_loader, train_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis)
         # test(model, device, test_loader)
-        scheduler.step()
+        if scheduler:
+            scheduler.step()
 
     if args.save_model:
         torch.save(model.state_dict(), "mnist_cnn.pt")

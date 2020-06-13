@@ -1,16 +1,49 @@
 import matplotlib.pyplot as plt
 import pandas as pd
+import os
 from torch import tensor
 
-SGD = pd.read_csv('fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv')\
-    .rename(columns={'losses': 'losses_sgd'})
-Adam = pd.read_csv('fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv')\
-    .rename(columns={'losses': 'losses_adagrad'})
-SRC = pd.read_csv('fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv')\
-    .rename(columns={'losses': 'losses_src'})
-SRC_M = pd.read_csv('fig_final/2020-06-09_14-42-26/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv')\
-    .rename(columns={'losses': 'losses_src_momentum'})
+
+def not_none(x):
+    return x is not None
+
+
+to_plot = 'losses'  # losses, least_eig
+
+sgd_file = None  # 'fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv'
+adam_file = None  # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
+src_file = 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-12_00-57-12/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
+src_m_file = None #  'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-11_18-57-58/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-12_00-31-48/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-11_12-13-38/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+src_m_non_ad_file = None  # 'fig/2020-06-11_12-14-02/loss_src_True_15000_0.001_AE_non-adaptive_10.0_100.0.csv'
+
+SGD = pd.read_csv(sgd_file) \
+                  .rename(columns={'losses': 'losses_sgd', 'least_eig': 'least_eig_sgd'}) if sgd_file else None
+
+Adagrad = pd.read_csv(adam_file) \
+                   .rename(columns={'losses': 'losses_adagrad', 'least_eig': 'least_eig_adagrad'}) if adam_file else None
+
+SRC = pd.read_csv(src_file) \
+                  .rename(columns={'losses': 'losses_src', 'least_eig': 'least_eig_src'}) if src_file else None
+
+SRC_M = pd.read_csv(src_m_file) \
+                    .rename(columns={'losses': 'losses_src_momentum', 'least_eig': 'least_eig_src_momentum'}) if src_m_file\
+    else None
+
+SRC_M_NON_AD = pd.read_csv(src_m_non_ad_file) \
+                           .rename(columns={'losses': 'losses_src_momentum_non_ad',
+                                            'least_eig': 'least_eig_src_momentum_non_ad'}) \
+    if src_m_non_ad_file else None
+
 #SRC['computations_round'] = SRC.computations.map(lambda x: round(x/100)*100)
+
+
 
 
 #combined = SRC.merge(Adam, how='left', left_on='computations_round', right_on='samples')\
@@ -19,13 +52,19 @@ SRC_M = pd.read_csv('fig_final/2020-06-09_14-42-26/loss_src_True_15000_0.001_AE_
 
 #print(combined_pure.head(20))
 
-optimizers = {'sgd': SGD[['computations', 'losses_sgd']],
-              'adagrad': Adam[['computations', 'losses_adagrad']],
-              'src': SRC[['computations', 'losses_src']],
-              'src_momentum': SRC_M[['computations', 'losses_src_momentum']]}
+optimizers = {'sgd': SGD[['computations', 'losses_sgd', 'least_eig_sgd']] if not_none(SGD) else None,
+              'adagrad': Adagrad[['computations', 'losses_adagrad', 'least_eig_adagrad']] if not_none(Adagrad) else None,
+              'src': SRC[['computations', 'losses_src', 'least_eig_src']] if not_none(SRC) else None,
+              'src_momentum': SRC_M[['computations', 'losses_src_momentum', 'least_eig_src_momentum']] if not_none(SRC_M) else None,
+              'src_momentum_non_ad': SRC_M_NON_AD[['computations', 'losses_src_momentum_non_ad',
+                                                   'least_eig_src_momentum_non_ad']]
+              if not_none(SRC_M_NON_AD) else None}
 
+keys = []
 for key, val in optimizers.items():
-    plt.plot(val['computations'], val['losses_' + key], label=key)
+    if not_none(val):
+        plt.plot(val['computations'], val[to_plot + '_' + key], label=key)
+        keys.append(key)
 plt.legend()
-plt.title('AE with MNIST')
-plt.savefig('fig/SGD_Adam_SRC_SRC_M_AE_MNIST.png')
+plt.title('AE with MNIST - ' + to_plot)
+plt.savefig('fig_output/' + to_plot + '_'.join(keys) + '_' + src_file.split('/')[1] + '.png')
