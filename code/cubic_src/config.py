@@ -83,7 +83,7 @@ class AE_MNIST(nn.Module):
             nn.Linear(256, 512),
             nn.Softplus(True),
             nn.Linear(512, 28 * 28),
-            nn.Tanh())
+            nn.Sigmoid())
 
     def forward(self, x):
         x = self.encoder(x)
@@ -98,7 +98,7 @@ def to_img(x):
     return x
 
 
-network_to_use = 'CNN_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST
+network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -154,16 +154,16 @@ model = models[network_to_use].to(dev)
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=10,
+           log_interval=1,
            subproblem_solver='adaptive',  # adaptive, non-adaptive
            delta_momentum=False,
            delta_momentum_stepsize=0.002,
-           initial_penalty_parameter=0.6,  # 15000, 10
+           initial_penalty_parameter=10,  # 15000, 10
            verbose=True,
            beta_lipschitz=1,
            eta=0.3,
-           sample_size_hessian=100,
-           sample_size_gradient=100
+           sample_size_hessian=3,
+           sample_size_gradient=3
            )
 
 #

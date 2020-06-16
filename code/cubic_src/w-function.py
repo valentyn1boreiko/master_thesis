@@ -44,17 +44,20 @@ opt = dict(model=model,
            n=1000,
            log_interval=100,
            problem='w-function',
-           sample_size_hessian=0.3,  # 0.3
-           sample_size_gradient=0.3,  # 0.3
-           subproblem_solver='adaptive',
-           initial_penalty_parameter=1500,  # 150, 1500
-           delta_momentum=True,
-           delta_momentum_stepsize=0.04)  # 0.04
+           sample_size_hessian=300,  # 0.3
+           sample_size_gradient=300,  # 0.3
+           subproblem_solver='non-adaptive',
+           eta=0.3,
+           n_iter=5,
+           initial_penalty_parameter=2,  # 150, 1500
+           beta_lipschitz=1,
+           delta_momentum=False,
+           delta_momentum_stepsize=.9)  # 0.9
 
 problem_type = 'non-convex'  # convex, non-convex
-max_iter = int(2e2)
-step_size = 0.04 #
-momentum = 0.7
+max_iter = int(4e2)
+step_size = 0.04  # 0.04, 0.001
+momentum = 0.9  # 0.7
 
 optimizer_type = 'SRC'  # SRC, SGD, Adam
 to_plot = 'loss'  # grad_norm, loss
@@ -64,13 +67,16 @@ losses = []
 grad_norms = []
 
 samples_seen = [0]
+computations_done_src = [0]
+grad_norms_src = []
+least_eig_src = []
 
 if optimizer_type == 'SGD':
     f_name = 'fig/w-function/computations_momentum_' + to_plot \
          + '_' + optimizer_type\
          + '_' + problem_type\
-         + '_' + str(int(opt['sample_size_gradient'] * opt['n']))\
-         + '_' + str(int(opt['sample_size_hessian'] * opt['n']))\
+         + '_' + str(int(opt['sample_size_gradient']))\
+         + '_' + str(int(opt['sample_size_hessian']))\
          + '_' + str(step_size) \
          + '_' + str(momentum) \
          + '_' + str(averaging_ops)
@@ -79,10 +85,13 @@ elif optimizer_type == 'SRC':
     f_name = 'fig/w-function/computations_' + to_plot \
              + '_' + optimizer_type \
              + '_' + problem_type \
-             + '_' + str(int(opt['sample_size_gradient'] * opt['n'])) \
-             + '_' + str(int(opt['sample_size_hessian'] * opt['n'])) \
+             + '_' + str(int(opt['sample_size_gradient'])) \
+             + '_' + str(int(opt['sample_size_hessian'])) \
              + '_' + opt['subproblem_solver'] \
+             + '_' + str(opt['eta']) \
+             + '_' + str(opt['n_iter']) \
              + '_' + str(opt['initial_penalty_parameter']) \
+             + '_' + str(opt['beta_lipschitz']) \
              + '_' + str(opt['delta_momentum']) \
              + '_' + str(opt['delta_momentum_stepsize']) \
              + '_' + str(averaging_ops)
@@ -92,13 +101,13 @@ elif optimizer_type == 'Adam':
              + '_' + to_plot \
              + '_' + optimizer_type \
              + '_' + problem_type \
-             + '_' + str(int(opt['sample_size_gradient'] * opt['n'])) \
-             + '_' + str(int(opt['sample_size_hessian'] * opt['n'])) \
+             + '_' + str(int(opt['sample_size_gradient'])) \
+             + '_' + str(int(opt['sample_size_hessian'])) \
              + '_' + str(step_size) \
              + '_' + str(averaging_ops)
 
 for op_num in range(averaging_ops):
-    X = torch.tensor([0.0, 0.0], requires_grad=True)
+    X = torch.tensor([10.0, 10.0], requires_grad=True)
     if optimizer_type == 'SRC':
         optimizer = SRC([X], opt=opt)
     elif optimizer_type == 'SGD':
@@ -115,14 +124,12 @@ for op_num in range(averaging_ops):
                 # Running mean
                 if i > 0:
                     losses[i] = (losses[i] * op_num + loss_.item()) / (op_num + 1)
-        if optimizer_type == 'SRC':
-            optimizer.computations_done.append(optimizer.computations_done[-1])
 
         if op_num == 0 and i > 0:
             # Nr of gradient samples
             samples_seen.append(samples_seen[-1]
-                            + int(opt['n'] * opt['sample_size_gradient'])
-                            + int((opt['n'] * opt['sample_size_hessian'])
+                            + int(opt['sample_size_gradient'])
+                            + int((opt['sample_size_hessian'])
                                   if optimizer_type == 'SRC' else 0)
                             )
 
@@ -148,24 +155,27 @@ for op_num in range(averaging_ops):
         for p in optimizer.param_groups[0]['params']:
             if optimizer_type == 'SGD':
                 p.grad += (torch.randn(
-                    (int(opt['n'] * opt['sample_size_gradient']),
+                    (int(opt['sample_size_gradient']),
                      p.shape[0])
                 ) + p.grad).mean(dim=0)
             print('param', p, p.grad)
 
         optimizer.step()
-        print('loss = ', loss_)
+        print('loss = ', loss_.item())
         if optimizer_type == 'SRC':
-            print(losses, optimizer.computations_done)
-            assert len(losses) == len(optimizer.computations_done[:-1]), 'losses != computations_done !'
+            computations_done_src.append(optimizer.computations_done)
+            grad_norms_src.append(optimizer.grad_norms)
+            least_eig_src.append(optimizer.least_eig)
+            print(losses, computations_done_src)
+            #assert len(losses) == len(optimizer.computations_done[:-1]), 'losses != computations_done !'
 
     print('Epoch {} done!'.format(op_num))
 
 print(samples_seen)
 print(losses)
 pd.DataFrame({'samples': samples_seen,
-              'computations': list(np.array(samples_seen) / int(opt['sample_size_gradient'] * opt['n']))
-              if optimizer_type in ['Adam', 'SGD'] else optimizer.computations_done[:-1],
+              'computations': list(np.array(samples_seen) / int(opt['sample_size_gradient']))
+              if optimizer_type in ['Adam', 'SGD'] else computations_done_src[:-1],
               'losses'
               if to_plot == 'loss' else 'grad_norm':
                   losses if to_plot == 'loss' else grad_norms
@@ -176,16 +186,16 @@ pd.DataFrame({'samples': samples_seen,
                index=None)
 
 if optimizer_type in ['Adam', 'SGD']:
-    plt.plot(list(np.array(samples_seen) / int(opt['sample_size_gradient'] * opt['n'])),
+    plt.plot(list(np.array(samples_seen) / int(opt['sample_size_gradient'])),
              losses if to_plot == 'loss' else grad_norms, label='loss')
 elif optimizer_type == 'SRC':
-    plt.plot(optimizer.computations_done[:-1], losses if to_plot == 'loss' else grad_norms, label='loss')
+    plt.plot(computations_done_src[120:-1], losses[120:] if to_plot == 'loss' else grad_norms, label='loss')
 plt.legend()
 plt.savefig(f_name + '.png')
 plt.clf()
 if optimizer_type == 'SRC':
-    plt.plot(optimizer.computations_done[:-1], optimizer.grad_norms, label='grad_norms')
-    plt.plot(optimizer.computations_done[:-1], optimizer.least_eig, label='least_eig')
+    plt.plot(computations_done_src[:-1], grad_norms_src, label='grad_norms')
+    plt.plot(computations_done_src[:-1], least_eig_src, label='least_eig')
     plt.legend()
     plt.savefig(f_name + '_eig_norms_' + '.png')
 

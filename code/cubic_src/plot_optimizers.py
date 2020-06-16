@@ -10,13 +10,16 @@ def not_none(x):
 
 to_plot = 'losses'  # losses, least_eig
 
-sgd_file = None  # 'fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv'
-adam_file = None  # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
-src_file = 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
+sgd_file = 'fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv'
+adagrad_file = 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
+adam_file = 'figs_without_date/_computations_AE_MNIST_Adam_0.001_100_100_1.csv'  # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
+src_file = 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
+#'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_00-57-12/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
-src_m_file = None #  'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+src_m_file = 'fig_final/2020-06-09_14-42-26/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+#  'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-11_18-57-58/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_00-31-48/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
@@ -24,10 +27,13 @@ src_m_file = None #  'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adapt
 src_m_non_ad_file = None  # 'fig/2020-06-11_12-14-02/loss_src_True_15000_0.001_AE_non-adaptive_10.0_100.0.csv'
 
 SGD = pd.read_csv(sgd_file) \
-                  .rename(columns={'losses': 'losses_sgd', 'least_eig': 'least_eig_sgd'}) if sgd_file else None
+                  .rename(columns={'losses': 'losses_sgd'}) if sgd_file else None
 
-Adagrad = pd.read_csv(adam_file) \
-                   .rename(columns={'losses': 'losses_adagrad', 'least_eig': 'least_eig_adagrad'}) if adam_file else None
+Adam = pd.read_csv(adam_file) \
+                   .rename(columns={'losses': 'losses_adam'}) if adam_file else None
+
+Adagrad = pd.read_csv(adagrad_file) \
+                   .rename(columns={'losses': 'losses_adagrad'}) if adagrad_file else None
 
 SRC = pd.read_csv(src_file) \
                   .rename(columns={'losses': 'losses_src', 'least_eig': 'least_eig_src'}) if src_file else None
@@ -52,15 +58,19 @@ SRC_M_NON_AD = pd.read_csv(src_m_non_ad_file) \
 
 #print(combined_pure.head(20))
 
-optimizers = {'sgd': SGD[['computations', 'losses_sgd', 'least_eig_sgd']] if not_none(SGD) else None,
-              'adagrad': Adagrad[['computations', 'losses_adagrad', 'least_eig_adagrad']] if not_none(Adagrad) else None,
-              'src': SRC[['computations', 'losses_src', 'least_eig_src']] if not_none(SRC) else None,
-              'src_momentum': SRC_M[['computations', 'losses_src_momentum', 'least_eig_src_momentum']] if not_none(SRC_M) else None,
-              'src_momentum_non_ad': SRC_M_NON_AD[['computations', 'losses_src_momentum_non_ad',
+x_axis_cols = ['samples', 'computations']
+
+optimizers = {'sgd': SGD[x_axis_cols + ['losses_sgd']] if not_none(SGD) else None,
+              'adagrad': Adagrad[x_axis_cols + ['losses_adagrad']] if not_none(Adagrad) else None,
+              'adam': Adam[x_axis_cols + ['losses_adam']] if not_none(Adam) else None,
+              'src': SRC[x_axis_cols + ['losses_src', 'least_eig_src']] if not_none(SRC) else None,
+              'src_momentum': SRC_M[x_axis_cols + ['losses_src_momentum', 'least_eig_src_momentum']] if not_none(SRC_M) else None,
+              'src_momentum_non_ad': SRC_M_NON_AD[x_axis_cols + ['losses_src_momentum_non_ad',
                                                    'least_eig_src_momentum_non_ad']]
               if not_none(SRC_M_NON_AD) else None}
 
 keys = []
+
 for key, val in optimizers.items():
     if not_none(val):
         plt.plot(val['computations'], val[to_plot + '_' + key], label=key)

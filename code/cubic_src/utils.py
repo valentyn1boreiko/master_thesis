@@ -12,7 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, datetime
 # Comment it out while using matrix_completion.py or w-function.py instead of train.py
-import config
+# import config
 
 
 def lanczos_tridiag_to_diag(t_mat):
@@ -124,7 +124,7 @@ class SRCutils(Optimizer):
         self.t = 0
         self.epsilon = 1e-08
 
-        self.defaults = dict(problem=opt.get('problem', 'MNIST'),  #matrix_completion, MNIST, w-function, AE
+        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
@@ -770,8 +770,9 @@ class SRCutils(Optimizer):
                 data = Variable(data.view(data.size(0), -1))
                 target = data
 
-        data = data.to(self.defaults['dev'])
-        target = target.to(self.defaults['dev'])
+        if not self.is_w_function:
+            data = data.to(self.defaults['dev'])
+            target = target.to(self.defaults['dev'])
 
         if self.first_hv:
             self.zero_grad()
