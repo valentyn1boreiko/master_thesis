@@ -1,13 +1,14 @@
 import torch
+import math
 from torch.nn import CrossEntropyLoss
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import dataloader
 from torchvision import transforms
-from torchvision.datasets import CIFAR10
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, CIFAR10
 import pytorch_optmizers
 import torch.nn.functional as F
 from torch import nn, optim
+import numpy as np
 from resnet_cifar import resnet20_cifar
 
 
@@ -35,6 +36,26 @@ class Net(nn.Module):
         x = self.fc2(x)
         output = F.log_softmax(x, dim=1)
         return output
+
+
+class CIFAR_Net(nn.Module):
+    def __init__(self):
+        super(CIFAR_Net, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
 
 
 class CONV_AE_MNIST(nn.Module):
@@ -68,20 +89,21 @@ class AE_MNIST(nn.Module):
         super(AE_MNIST, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(28 * 28, 512),
-            nn.Softplus(True),
+            nn.Softplus(threshold=float('inf')),
             nn.Linear(512, 256),
-            nn.Softplus(True),
+            nn.Softplus(threshold=float('inf')),
             nn.Linear(256, 128),
-            nn.Softplus(True),
-            nn.Linear(128, 32)
+            nn.Softplus(threshold=float('inf')),
+            nn.Linear(128, 32),
+            nn.Softplus(threshold=float('inf'))
         )
         self.decoder = nn.Sequential(
             nn.Linear(32, 128),
-            nn.Softplus(True),
+            nn.Softplus(threshold=float('inf')),
             nn.Linear(128, 256),
-            nn.Softplus(True),
+            nn.Softplus(threshold=float('inf')),
             nn.Linear(256, 512),
-            nn.Softplus(True),
+            nn.Softplus(threshold=float('inf')),
             nn.Linear(512, 28 * 28),
             nn.Sigmoid())
 
@@ -90,15 +112,22 @@ class AE_MNIST(nn.Module):
         x = self.decoder(x)
         return x
 
+    def reset_parameters(self):
+        #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)
+        bound = math.sqrt(6 / (fan_in + fan_out))
+        if self.bias is not None:
+            nn.init.uniform_(self.bias, -bound, bound)
+        nn.init.uniform_(self.weight, -bound, bound)
 
 def to_img(x):
-    x = 0.5 * (x + 1)
+    #x = 0.5 * (x + 1)
     x = x.clamp(0, 1)
     x = x.view(x.size(0), 1, 28, 28)
     return x
 
 
-network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST
+network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -107,31 +136,45 @@ transforms_dict = {
                        ]),
         'AE_MNIST': transforms.Compose([
                            transforms.ToTensor(),
-                           transforms.Normalize((0.5,), (0.5,))
+                           #transforms.Normalize((0.5,), (0.5,))
                        ]),
         'CONV_AE_MNIST': transforms.Compose([
                            transforms.ToTensor(),
                            transforms.Normalize((0.5,), (0.5,))
-                       ])
+                       ]),
+        'CNN_CIFAR': transforms.Compose(
+            [transforms.ToTensor(),
+             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     }
 
 models = {'AE_MNIST': AE_MNIST(),
           'CONV_AE_MNIST': CONV_AE_MNIST(),
-          'CNN_MNIST': Net()}
+          'CNN_MNIST': Net(),
+          'CNN_CIFAR': CIFAR_Net()}
 
 criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
             'CONV_AE_MNIST': nn.MSELoss(reduction='mean'),
-            'CNN_MNIST': F.nll_loss}
+            'CNN_MNIST': F.nll_loss,
+            'CNN_CIFAR': nn.CrossEntropyLoss()}
+
 
 # Loading the data
-train = MNIST('./data', train=True, download=True,
-              transform=transforms_dict[network_to_use], )
+def dataset(network_to_use_):
+    if 'MNIST' in network_to_use_:
+        return MNIST
+    elif 'CIFAR' in network_to_use_:
+        return CIFAR10
+
+
+train = dataset(network_to_use)('./data', train=True, download=True,
+                                transform=transforms_dict[network_to_use], )
 
 # Get the number of samples in the dataset
 n = train.data.shape[0]
 
-test = MNIST('./data', train=False, download=True,
-             transform=transforms_dict[network_to_use], )
+test = dataset(network_to_use)('./data', train=False, download=True,
+                               transform=transforms_dict[network_to_use], )
+
 
 #loss_fn = CrossEntropyLoss()
 
@@ -150,20 +193,22 @@ else:
 print('Using dev', dev)
 model = models[network_to_use].to(dev)
 
+print(model)
 # MNIST opt
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
            log_interval=1,
+           problem=network_to_use,
            subproblem_solver='adaptive',  # adaptive, non-adaptive
-           delta_momentum=False,
-           delta_momentum_stepsize=0.002,
+           delta_momentum=True,
+           delta_momentum_stepsize=0.01,
            initial_penalty_parameter=10,  # 15000, 10
            verbose=True,
            beta_lipschitz=1,
            eta=0.3,
-           sample_size_hessian=3,
-           sample_size_gradient=3
+           sample_size_hessian=10,
+           sample_size_gradient=100
            )
 
 #
@@ -172,7 +217,6 @@ optimizer = pytorch_optmizers.SRC(model.parameters(), opt=opt)
 #scheduler = MultiStepLR(optimizer, [81, 122, 164], gamma=0.1)
 
 # Detecting device
-
 
 optimizer.defaults['dev'] = dev
 # ToDo: can we do so? (We increase the sample size if case 1 is not satisfied)
@@ -206,4 +250,13 @@ dataloader_args, train_loader = init_train_loader(dataloader, train)
 test_loader = dataloader.DataLoader(test, **dataloader_args)
 
 _, train_loader_hess = init_train_loader(dataloader, train, sampling_scheme_name='fixed_hess')
+
+
+#arr = torch.from_numpy(np.load('test_vec.npy')).view(-1)
+#print(loss_fn(model(arr), arr))
+#dataiter = iter(train_loader)
+#images = dataiter.next()
+#arr = images[0][0][0].detach().numpy()
+#print(arr)
+#np.save('test_vec.npy', arr)
 

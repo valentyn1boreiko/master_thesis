@@ -12,7 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, datetime
 # Comment it out while using matrix_completion.py or w-function.py instead of train.py
-# import config
+import config
 
 
 def lanczos_tridiag_to_diag(t_mat):
@@ -108,6 +108,7 @@ class SRCutils(Optimizer):
         self.grad, self.params = None, None
         self.samples_seen = 0
         self.computations_done = 0
+        self.computations_done_times_samples = 0
         self.test_losses = 0
         self.least_eig = None
         self.grad_norms = None
@@ -124,7 +125,7 @@ class SRCutils(Optimizer):
         self.t = 0
         self.epsilon = 1e-08
 
-        self.defaults = dict(problem=opt.get('problem', 'AE'),  #matrix_completion, MNIST, w-function, AE
+        self.defaults = dict(problem=opt.get('problem', 'CNN'),  #matrix_completion, CNN, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
                              adaptive_rho=adaptive_rho,
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
@@ -146,7 +147,7 @@ class SRCutils(Optimizer):
                              AccGD=opt.get('AccGD', False),
                              innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', True),
-                             n_iter=opt.get('n_iter', 100),
+                             n_iter=opt.get('n_iter', 5),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
@@ -155,8 +156,8 @@ class SRCutils(Optimizer):
         self.first_entry = True
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
         self.is_w_function = self.defaults['problem'] == 'w-function'
-        self.is_mnist = self.defaults['problem'] == 'MNIST'
-        self.is_AE = self.defaults['problem'] == 'AE'
+        self.is_mnist = 'CNN' in self.defaults['problem']
+        self.is_AE = 'AE' in self.defaults['problem']
         self.mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         os.mkdir(self.mydir)
         self.f_name = self.mydir + '/loss_src' \
@@ -210,8 +211,10 @@ class SRCutils(Optimizer):
                 outputs = self.model(data_)
                 if self.is_AE:
                     loss += self.loss_fn(outputs, target_).item() * n
-                else:
+                elif 'MNIST' in self.defaults['problem']:
                     loss += self.loss_fn(outputs, target_, reduction='sum').item()
+                elif 'CIFAR' in self.defaults['problem']:
+                    loss += self.loss_fn(outputs, target_).item()
                 # Get prediction
                 _, predicted = torch.max(outputs.data, 1)
                 # Total number of labels
@@ -284,6 +287,7 @@ class SRCutils(Optimizer):
 
             pd.DataFrame({'samples': [self.samples_seen],
                           'computations': [self.computations_done],
+                          'computations_times_sample': [self.computations_done_times_samples],
                           'losses': [self.test_losses],
                           'train_losses': [train_loss],
                           'grad_norms': [self.grad_norms],
@@ -329,6 +333,7 @@ class SRCutils(Optimizer):
             # Power iteration
             for _ in range(maxIter):
                 self.computations_done += 1
+                self.computations_done_times_samples += self.defaults['sample_size_gradient']
                 Hv = H_bmm(q)
                 eigenvalue_tmp = torch.dot(Hv, q)
                 Hv_norm = torch.norm(Hv)
@@ -357,6 +362,7 @@ class SRCutils(Optimizer):
             for _ in range(maxIter):
                 if which == 'biggest':
                     self.computations_done += 1
+                    self.computations_done_times_samples += self.defaults['sample_size_gradient']
                 Hv = H_bmm(q)
                 a = torch.dot(Hv, q)
                 Hv -= (b * q_last + a * q)
@@ -467,6 +473,9 @@ class SRCutils(Optimizer):
             delta = self.cauchy_point(grad_norm)
             #self.computations_done[-1] += self.get_num_points() + self.get_num_points('hessian')
             self.computations_done += 1 + 1
+            self.computations_done_times_samples += \
+                self.defaults['sample_size_gradient'] + self.defaults['sample_size_hessian']
+
             print('delta_m ', self.m_delta(delta))
         else:
             self.case_n = 2
@@ -501,9 +510,14 @@ class SRCutils(Optimizer):
                 m = 0
                 v = 0
             self.computations_done += 1
+            self.computations_done_times_samples += \
+                self.defaults['sample_size_gradient']
+
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
                 self.computations_done += 1
+                self.computations_done_times_samples += \
+                    self.defaults['sample_size_hessian']
                 if self.defaults['subproblem_solver'] == 'adaptive':
                     # Experimental, Nesterov’s accelerated gradient descent
                     # Accelerated Gradient Descent Escapes Saddle Points
