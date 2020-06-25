@@ -146,7 +146,7 @@ class SRCutils(Optimizer):
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
                              innerAdam=opt.get('innerAdam', False),
-                             verbose=opt.get('verbose', True),
+                             verbose=opt.get('verbose', False),
                              n_iter=opt.get('n_iter', 5),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
@@ -159,20 +159,11 @@ class SRCutils(Optimizer):
         self.is_mnist = 'CNN' in self.defaults['problem']
         self.is_AE = 'AE' in self.defaults['problem']
         self.mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-        os.mkdir(self.mydir)
-        self.f_name = self.mydir + '/loss_src' \
-                      + '_' + str(self.defaults['delta_momentum']) \
-                      + '_' + str(self.defaults['sigma']) \
-                      + '_' + str(self.defaults['delta_momentum_stepsize']) \
-                      + '_' + self.defaults['problem'] \
-                      + '_' + self.defaults['subproblem_solver'] \
-                      + '_' + str(self.defaults['sample_size_hessian']) \
-                      + '_' + str(self.defaults['sample_size_gradient'])
-        blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess', 'train_loader_hess']
-        settings_dict = dict([(key, val) for key, val in self.defaults.items() if key not in blacklist_keys])
-        json.dump(settings_dict, open(self.mydir + '/settings.json', 'w'))
+        try:
+            os.mkdir(self.mydir)
+        except Exception as e:
+            print(str(e))
 
-        print('Saving in:', self.f_name)
         super(SRCutils, self).__init__(params, self.defaults)
 
     def perturb(self, type_='gradient', hv=None):
@@ -195,52 +186,73 @@ class SRCutils(Optimizer):
     def get_num_points(self, type_='gradient'):
         return int(self.defaults['sample_size_' + type_])
 
-    def get_accuracy(self, loader):
+    def get_accuracy(self, loaders):
         self.model.eval()
-        correct, total, loss = (0, 0, 0)
+        nn = len(loaders)
+        acc, correct, total, loss = ([0]*nn, [0]*nn, [0]*nn, [0]*nn)
 
         with torch.no_grad():
-            for batch_idx_, (data_, target_) in enumerate(loader):
-                # Get Samples
-                n = len(data_)
+            for l_i, loader_ in enumerate(loaders):
+                for batch_idx_, (data_, target_) in enumerate(loader_):
+                    # Get Samples
+                    n = len(data_)
+                    if self.is_AE:
+                        data_ = Variable(data_.view(data_.size(0), -1))
+                        target_ = data_
+                    data_ = data_.to(self.defaults['dev'])
+                    target_ = target_.to(self.defaults['dev'])
+                    outputs = self.model(data_)
+                    if self.is_AE:
+                        loss[l_i] += self.loss_fn(outputs, target_).item() * n
+                    elif 'MNIST' in self.defaults['problem']:
+                        loss[l_i] += self.loss_fn(outputs, target_, reduction='sum').item()
+                    elif 'CIFAR' in self.defaults['problem']:
+                        loss[l_i] += self.loss_fn(outputs, target_).item()
+                    # Get prediction
+                    _, predicted = torch.max(outputs.data, 1)
+                    # Total number of labels
+                    total[l_i] += len(target_)
+                    # Total correct predictions
+                    if not self.is_AE:
+                        correct[l_i] += (predicted == target_).sum().detach()
+                    del predicted
                 if self.is_AE:
-                    data_ = Variable(data_.view(data_.size(0), -1))
-                    target_ = data_
-                data_ = data_.to(self.defaults['dev'])
-                target_ = target_.to(self.defaults['dev'])
-                outputs = self.model(data_)
-                if self.is_AE:
-                    loss += self.loss_fn(outputs, target_).item() * n
-                elif 'MNIST' in self.defaults['problem']:
-                    loss += self.loss_fn(outputs, target_, reduction='sum').item()
-                elif 'CIFAR' in self.defaults['problem']:
-                    loss += self.loss_fn(outputs, target_).item()
-                # Get prediction
-                _, predicted = torch.max(outputs.data, 1)
-                # Total number of labels
-                total += len(target_)
-                # Total correct predictions
+                    img_ = config.to_img(outputs)[2].reshape(28, 28)
+                    img_2 = config.to_img(outputs)[3].reshape(28, 28)
+
+                    img_target = config.to_img(target_)[2].reshape(28, 28)
+                    img_target_2 = config.to_img(target_)[3].reshape(28, 28)
+                del outputs, target_
+
+                loss[l_i] = loss[l_i] / len(loader_.dataset)
+
                 if not self.is_AE:
-                    correct += (predicted == target_).sum().detach()
-                del predicted
-            if self.is_AE:
-                img_ = config.to_img(outputs)[2].reshape(28, 28)
-                img_2 = config.to_img(outputs)[3].reshape(28, 28)
+                    acc[l_i] = 100 * correct[l_i] / total[l_i]
 
-                img_target = config.to_img(target_)[2].reshape(28, 28)
-                img_target_2 = config.to_img(target_)[3].reshape(28, 28)
-            del outputs, target_
-
-
-
-        if not self.is_AE:
-            acc = 100 * correct / total
-        loss = loss / len(loader.dataset)
 
         print("All points {}".format(total))
+        if nn == 1:
+            loss = loss[0]
+            acc = acc[0]
         return loss, (acc if not self.is_AE else (img_, img_2, img_target, img_target_2))
 
     def print_acc(self, batch_size, epoch, batch_idx):
+        if self.first_entry:
+            self.f_name = self.mydir + '/loss_src' \
+                          + '_delta=' + str(self.defaults['delta_momentum']) \
+                          + '_sigma=' + str(self.defaults['sigma']) \
+                          + '_delta_step=' + str(self.defaults['delta_momentum_stepsize']) \
+                          + '_eta=' + str(self.defaults['eta']) \
+                          + '_' + self.defaults['problem'] \
+                          + '_' + self.defaults['subproblem_solver'] \
+                          + '_H_size=' + str(self.defaults['sample_size_hessian']) \
+                          + '_g_size=' + str(self.defaults['sample_size_gradient'])
+            blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess', 'train_loader_hess']
+            settings_dict = dict([(key, val) for key, val in self.defaults.items() if key not in blacklist_keys])
+            json.dump(settings_dict, open(self.mydir + '/settings.json', 'w'))
+
+            print('Saving in:', self.f_name)
+
         #train_loss, train_acc = self.get_accuracy(train_loader)
         #print(
         #    "Epoch {} Train Loss: {:.4f} Accuracy :{:.4f} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch, train_loss,
@@ -250,10 +262,10 @@ class SRCutils(Optimizer):
 
         if batch_idx % self.defaults['log_interval'] == 0:
             test_loss, test_acc = self.get_accuracy(config.test_loader)
-            train_loss, train_acc = self.get_accuracy(config.train_loader)
+            train_loss, train_acc = self.get_accuracy([config.train_loader])
 
             if self.is_AE:
-                if batch_idx % self.defaults['plot_interval'] == 0:
+                if False and batch_idx % self.defaults['plot_interval'] == 0:
                     fig = plt.figure(figsize=(8, 8))
                     for i, _img in enumerate([test_acc, train_acc]):
                         for j in range(len(_img)):
@@ -269,18 +281,18 @@ class SRCutils(Optimizer):
             if not self.is_AE:
                 print(
                     "Epoch {} Test Loss: {:.4f} Accuracy: {:.4f}".format(epoch,
-                                                                         test_loss,
-                                                                         test_acc
+                                                                         test_loss[0],
+                                                                         test_acc[0]
                                                                          )
                 )
             else:
                 print(
                     "Epoch {} Test Loss: {:.4f}".format(epoch,
-                                                        test_loss
+                                                        test_loss[0]
                                                         )
                 )
 
-            self.test_losses = test_loss
+            self.test_losses = test_loss[0]
             #plt.plot(self.computations_done, self.test_losses, label='loss')
             #plt.legend()
             print('batch id', batch_idx)
@@ -289,6 +301,7 @@ class SRCutils(Optimizer):
                           'computations': [self.computations_done],
                           'computations_times_sample': [self.computations_done_times_samples],
                           'losses': [self.test_losses],
+                          'val_losses': test_loss[1],
                           'train_losses': [train_loss],
                           'grad_norms': [self.grad_norms],
                           'least_eig': [self.least_eig if self.least_eig else None],

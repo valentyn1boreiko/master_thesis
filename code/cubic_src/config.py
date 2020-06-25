@@ -89,21 +89,21 @@ class AE_MNIST(nn.Module):
         super(AE_MNIST, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(28 * 28, 512),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(512, 256),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(256, 128),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(128, 32),
-            nn.Softplus(threshold=float('inf'))
+            nn.Softplus()
         )
         self.decoder = nn.Sequential(
             nn.Linear(32, 128),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(128, 256),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(256, 512),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(512, 28 * 28),
             nn.Sigmoid())
 
@@ -165,12 +165,11 @@ def dataset(network_to_use_):
     elif 'CIFAR' in network_to_use_:
         return CIFAR10
 
-
-train = dataset(network_to_use)('./data', train=True, download=True,
-                                transform=transforms_dict[network_to_use], )
-
-# Get the number of samples in the dataset
-n = train.data.shape[0]
+dataset_ = dataset(network_to_use)('../data', train=True, download=True,
+                                   transform=transforms_dict[network_to_use])
+n = len(dataset_)
+train_size = int(n*(5/6))
+train_set, val_set = torch.utils.data.random_split(dataset_, [train_size, n-train_size])
 
 test = dataset(network_to_use)('./data', train=False, download=True,
                                transform=transforms_dict[network_to_use], )
@@ -198,13 +197,13 @@ print(model)
 opt = dict(model=model,
            loss_fn=loss_fn,
            n=n,
-           log_interval=1,
+           log_interval=100,
            problem=network_to_use,
            subproblem_solver='adaptive',  # adaptive, non-adaptive
            delta_momentum=True,
            delta_momentum_stepsize=0.01,
            initial_penalty_parameter=10,  # 15000, 10
-           verbose=True,
+           verbose=False,
            beta_lipschitz=1,
            eta=0.3,
            sample_size_hessian=10,
@@ -246,10 +245,13 @@ def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_
 
 
 # Init train loader
-dataloader_args, train_loader = init_train_loader(dataloader, train)
-test_loader = dataloader.DataLoader(test, **dataloader_args)
+dataloader_args, train_loader = init_train_loader(dataloader, train_set)
+test_loader_ = dataloader.DataLoader(test, **dataloader_args)
+val_loader = dataloader.DataLoader(val_set, **dataloader_args)
 
-_, train_loader_hess = init_train_loader(dataloader, train, sampling_scheme_name='fixed_hess')
+test_loader = (test_loader_, val_loader)
+
+_, train_loader_hess = init_train_loader(dataloader, train_set, sampling_scheme_name='fixed_hess')
 
 
 #arr = torch.from_numpy(np.load('test_vec.npy')).view(-1)

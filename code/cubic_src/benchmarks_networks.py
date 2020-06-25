@@ -13,6 +13,8 @@ import datetime
 import pandas as pd
 import os
 import math
+import matplotlib
+matplotlib.use('Agg')
 
 
 class Net(nn.Module):
@@ -267,7 +269,7 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
         print('\nTest set: Average loss: {:.4f}\n'.format(
             test_loss[1]))
 
-        if samples_seen_ % 5 * log_interval == 0:
+        if False and samples_seen_ % 5 * log_interval == 0:
             fig = plt.figure(figsize=(4, 8))
             for i, _img in enumerate([test_img, train_img]):
                 for j in range(len(_img)):
@@ -336,6 +338,8 @@ def main():
 
     parser.add_argument('--save-model', action='store_true', default=False,
                         help='For Saving the current Model')
+    parser.add_argument('--plot-results', default=True,
+                        help='If to plot the results')
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 

@@ -9,16 +9,23 @@ def not_none(x):
 
 
 to_plot = 'losses'  # losses, least_eig
+from_ = 0.1  # 1.0
 
-sgd_file = 'fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv'
-adagrad_file = 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
-adam_file = 'figs_without_date/_computations_AE_MNIST_Adam_0.001_100_100_1.csv'  # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
-src_file = 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
-#'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
+
+sgd_file = 'fig/benchmarks_networks_2020-06-23_19-06-43/computations_CNN_MNIST_SGD_0.05_100_100_1_scheduler=False.csv'
+# 'fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv'
+adagrad_file = None
+# 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
+adam_file = 'fig/benchmarks_networks_2020-06-23_19-06-43/computations_CNN_MNIST_Adam_0.0005_100_100_1_scheduler=False.csv'
+# 'figs_without_date/_computations_AE_MNIST_Adam_0.001_100_100_1.csv'  # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
+src_file = None
+# 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
+# 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_00-57-12/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
-src_m_file = 'fig_final/2020-06-09_14-42-26/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
+src_m_file = None
+# 'fig_final/2020-06-09_14-42-26/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 #  'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-11_18-57-58/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
@@ -73,8 +80,9 @@ keys = []
 
 for key, val in optimizers.items():
     if not_none(val):
-        plt.plot(val['computations'], val[to_plot + '_' + key], label=key)
+        n = len(val['samples'])
+        plt.plot(val['samples'][int(n*from_):], val[to_plot + '_' + key][int(n*from_):], label=key)
         keys.append(key)
 plt.legend()
 plt.title('AE with MNIST - ' + to_plot)
-plt.savefig('fig_output/' + to_plot + '_'.join(keys) + '_' + src_file.split('/')[1] + '.png')
+plt.savefig('fig_output/' + str(from_) + '_' + to_plot + '_'.join(keys) + '_' + sgd_file.split('/')[1] + '.png')
