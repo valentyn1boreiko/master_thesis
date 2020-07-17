@@ -9,22 +9,28 @@ def not_none(x):
 
 
 to_plot = 'losses'  # losses, least_eig
-from_ = 0.1  # 1.0
+from_ = 0.0  # 1.0
+till_ = 1.0
 
-
-sgd_file = 'fig/benchmarks_networks_2020-06-23_19-06-43/computations_CNN_MNIST_SGD_0.05_100_100_1_scheduler=False.csv'
+sgd_file = 'fig/benchmarks_networks_2020-07-13_14-55-30/computations_AE_MNIST_SGD_0.3_100_100_1_scheduler=False.csv'
+# 'fig/benchmarks_networks_2020-06-25_18-16-28/computations_AE_MNIST_SGD_0.3_100_100_1_scheduler=False.csv'
+# 'fig/benchmarks_networks_2020-06-23_19-06-43/computations_CNN_MNIST_SGD_0.05_100_100_1_scheduler=False.csv'
 # 'fig_final/_computations_AE_MNIST_SGD_0.3_100_100_1.csv'
 adagrad_file = None
 # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
-adam_file = 'fig/benchmarks_networks_2020-06-23_19-06-43/computations_CNN_MNIST_Adam_0.0005_100_100_1_scheduler=False.csv'
+adam_file = None
+# 'fig/benchmarks_networks_2020-06-25_18-16-29/computations_AE_MNIST_Adam_0.001_100_100_1_scheduler=False.csv'
+# 'fig/benchmarks_networks_2020-06-23_19-06-43/computations_CNN_MNIST_Adam_0.0005_100_100_1_scheduler=False.csv'
 # 'figs_without_date/_computations_AE_MNIST_Adam_0.001_100_100_1.csv'  # 'fig_final/_computations_AE_MNIST_Adagrad_0.001_100_100_1.csv'
-src_file = None
+src_file = 'fig/2020-07-13_16-18-58/loss_src_delta=False_sigma=1.0_delta_step=0.001_eta=0.3_AE_MNIST_non-adaptive_H_size=10_g_size=100.csv'
+# 'fig/2020-06-25_09-23-13/loss_src_delta=False_sigma=10.0_delta_step=0.001_eta=0.5_AE_MNIST_non-adaptive_H_size=10_g_size=100.csv'
 # 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_01-14-01/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-12_00-57-12/loss_src_False_10_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig_final/2020-06-09_14-53-09/loss_src_False_15000_0.001_AE_adaptive_10.0_100.0.csv'
 src_m_file = None
+# 'fig/2020-06-25_09-23-14/loss_src_delta=True_sigma=100.0_delta_step=0.001_eta=0.3_AE_MNIST_adaptive_H_size=10_g_size=100.csv'
 # 'fig_final/2020-06-09_14-42-26/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 #  'fig/2020-06-12_01-18-09/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
 # 'fig/2020-06-11_18-57-58/loss_src_True_15000_0.001_AE_adaptive_10.0_100.0.csv'
@@ -65,14 +71,16 @@ SRC_M_NON_AD = pd.read_csv(src_m_non_ad_file) \
 
 #print(combined_pure.head(20))
 
+x_axis_cols_src = ['samples', 'computations', 'computations_times_sample']
 x_axis_cols = ['samples', 'computations']
+
 
 optimizers = {'sgd': SGD[x_axis_cols + ['losses_sgd']] if not_none(SGD) else None,
               'adagrad': Adagrad[x_axis_cols + ['losses_adagrad']] if not_none(Adagrad) else None,
               'adam': Adam[x_axis_cols + ['losses_adam']] if not_none(Adam) else None,
-              'src': SRC[x_axis_cols + ['losses_src', 'least_eig_src']] if not_none(SRC) else None,
-              'src_momentum': SRC_M[x_axis_cols + ['losses_src_momentum', 'least_eig_src_momentum']] if not_none(SRC_M) else None,
-              'src_momentum_non_ad': SRC_M_NON_AD[x_axis_cols + ['losses_src_momentum_non_ad',
+              'src': SRC[x_axis_cols_src + ['losses_src', 'least_eig_src']] if not_none(SRC) else None,
+              'src_momentum': SRC_M[x_axis_cols_src + ['losses_src_momentum', 'least_eig_src_momentum']] if not_none(SRC_M) else None,
+              'src_momentum_non_ad': SRC_M_NON_AD[x_axis_cols_src + ['losses_src_momentum_non_ad',
                                                    'least_eig_src_momentum_non_ad']]
               if not_none(SRC_M_NON_AD) else None}
 
@@ -81,8 +89,9 @@ keys = []
 for key, val in optimizers.items():
     if not_none(val):
         n = len(val['samples'])
-        plt.plot(val['samples'][int(n*from_):], val[to_plot + '_' + key][int(n*from_):], label=key)
+        plt.plot(val['samples' if 'src' not in key  else 'computations_times_sample']
+                 [int(n*from_):int(n*till_)], val[to_plot + '_' + key][int(n*from_):int(n*till_)], label=key)
         keys.append(key)
 plt.legend()
 plt.title('AE with MNIST - ' + to_plot)
-plt.savefig('fig_output/' + str(from_) + '_' + to_plot + '_'.join(keys) + '_' + sgd_file.split('/')[1] + '.png')
+plt.savefig('fig_output/' + str(from_) + '_' + str(till_) + '_' + to_plot + '_'.join(keys) + '_' + sgd_file.split('/')[1] + '.png')

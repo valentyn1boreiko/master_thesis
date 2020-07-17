@@ -16,6 +16,9 @@ import math
 import matplotlib
 matplotlib.use('Agg')
 
+torch.manual_seed(7)
+torch.set_printoptions(precision=10)
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -118,21 +121,21 @@ class AE_MNIST(nn.Module):
         super(AE_MNIST, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(28 * 28, 512),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(512, 256),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(256, 128),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(128, 32),
-            nn.Softplus(threshold=float('inf'))
+            nn.Softplus()
         )
         self.decoder = nn.Sequential(
             nn.Linear(32, 128),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(128, 256),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(256, 512),
-            nn.Softplus(threshold=float('inf')),
+            nn.Softplus(),
             nn.Linear(512, 28 * 28),
             nn.Sigmoid())
 
@@ -141,14 +144,6 @@ class AE_MNIST(nn.Module):
         x = self.decoder(x)
         return x
 
-    def reset_parameters(self):
-        #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)
-        bound = math.sqrt(6 / (fan_in + fan_out))
-        if self.bias is not None:
-            nn.init.uniform_(self.bias, -bound, bound)
-        nn.init.uniform_(self.weight, -bound, bound)
-
 # Loading the data
 def dataset(network_to_use_):
     if 'MNIST' in network_to_use_:
@@ -156,6 +151,14 @@ def dataset(network_to_use_):
     elif 'CIFAR' in network_to_use_:
         return CIFAR10
 
+
+def weights_init(m):
+    if isinstance(m, nn.Linear):
+        #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(m.weight)
+        bound = math.sqrt(6 / (fan_in + fan_out))
+        nn.init.uniform_(m.bias, -bound, bound)
+        nn.init.uniform_(m.weight, -bound, bound)
 
 def to_img(x):
     #x = 0.5 * (x + 1)
@@ -187,15 +190,23 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
             test(model, device, test_loader, train_loader, optimizer, batch_idx * len(data), args.log_interval, criterion,
                  network_to_use, x_axis)
 
+            if args.save_model:
+                torch.save(model.state_dict(), "models/benchmarks_" + network_to_use + "_"
+                           + args.optimizer + "_" + str(epoch) + ".pt")
+
+
 
 def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use, x_axis):
+    torch.manual_seed(7)
+
     model.eval()
     test_loss, train_loss = [0, 0], 0
     correct, train_correct = 0, 0
     is_CNN = 'CNN' in network_to_use
     is_AE = network_to_use == 'AE_MNIST'
-
+    torch.manual_seed(7)
     with torch.no_grad():
+
         for l_i, test_loader in enumerate(test_loaders):
             for data, target in test_loader:
                 n = len(data)
@@ -204,8 +215,9 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                 if network_to_use == 'AE_MNIST':
                     data = Variable(data.view(data.size(0), -1))
                     target = data
-
+                torch.manual_seed(7)
                 output = model(data)
+                #print(data.norm(p=2), output.norm(p=2))
                 if is_CNN:
                     if 'MNIST' in network_to_use:
                         test_loss[l_i] += criterion(output, target, reduction='sum').item()  # sum up batch loss
@@ -218,6 +230,8 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                     correct += pred.eq(target.view_as(pred)).sum().item()
 
             test_loss[l_i] /= len(test_loader.dataset)
+            #print(test_loss[l_i], len(test_loader.dataset), model.training)
+            #exit(0)
 
     if is_AE:
         _img = to_img(output)[2].reshape(28, 28)
@@ -314,7 +328,7 @@ def main():
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
     parser.add_argument('--network-to-use', type=str, default='CNN_MNIST',  # AE_MNIST, CNN_MNIST, CNN_CIFAR
                         help='which network and problem to use (default: CNN_MNIST)')
-    parser.add_argument('--optimizer', type=str, default='SGD',  # SGD, Adam, Adagrad
+    parser.add_argument('--optimizer', type=str, default='Adam',  # SGD, Adam, Adagrad
                         help='which optimizer to use (default: SGD)')
     parser.add_argument('--batch-size', type=int, default=batch_size, metavar='N',  # 60 for AE_MNIST, 1 for CNN_MNIST
                         help='input batch size for training (default: 64)')
@@ -328,7 +342,7 @@ def main():
                         help='Learning rate step gamma (default: 0.7)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
-    parser.add_argument('--seed', type=int, default=1, metavar='S',
+    parser.add_argument('--seed', type=int, default=7, metavar='S',
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=100 * batch_size, metavar='N',
                         help='how many samples to wait before logging training status')
@@ -342,8 +356,6 @@ def main():
                         help='If to plot the results')
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
-
-    torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if use_cuda else "cpu")
 
@@ -365,30 +377,6 @@ def main():
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     }
 
-    dataset_ = dataset(network_to_use)('../data', train=True, download=True,
-                                       transform=transforms_dict[network_to_use])
-    n = len(dataset_)
-    train_size = int(n*(5/6))
-    train_set, val_set = torch.utils.data.random_split(dataset_, [train_size, n-train_size])
-
-    train_loader = torch.utils.data.DataLoader(
-        train_set,
-        batch_size=args.batch_size, shuffle=True, **kwargs)
-
-    val_loader = torch.utils.data.DataLoader(
-        val_set,
-        batch_size=args.batch_size, shuffle=True, **kwargs)
-
-    test_loader_ = torch.utils.data.DataLoader(
-        dataset(network_to_use)('../data', train=False,
-                                transform=transforms_dict[network_to_use]
-                                ),
-        batch_size=args.test_batch_size, shuffle=True, **kwargs)
-
-    test_loader = (val_loader, test_loader_)
-    print('Dataset sizes: ', len(list(train_loader)),
-          len(list(val_loader)),
-          len(list(test_loader_)))
 
     models = {'AE_MNIST': AE_MNIST(),  # AE_MNIST_torch, AE_MNIST
               'CNN_MNIST': Net(),
@@ -398,13 +386,18 @@ def main():
                 'CNN_MNIST': F.nll_loss,
                 'CNN_CIFAR': nn.CrossEntropyLoss()}
 
+
     model = models[network_to_use].to(device)
+    torch.manual_seed(7)
+    model.apply(weights_init)
+
     criterion = criteria[network_to_use]
 
     optimizer_ = args.optimizer
     optimizers = {'SGD': optim.SGD,
                   'Adam': optim.Adam,
                   'Adagrad': optim.Adagrad}
+
 
     optimizer = optimizers[optimizer_](model.parameters(), lr=args.lr)
     print(args)
@@ -431,19 +424,62 @@ def main():
     optimizer.losses = [0]
     optimizer.computations_done = [0]
 
+
     optimizer.first_entry = True
     if scheduler:
         scheduler = StepLR(optimizer, step_size=step_size, gamma=args.gamma)
 
+    torch.manual_seed(7)
+
+    dataset_ = dataset(network_to_use)('../data', train=True, download=True,
+                                       transform=transforms_dict[network_to_use])
+    n = len(dataset_)
+    train_size = int(n * (5 / 6))
+    torch.manual_seed(7)
+
+    train_set, val_set = torch.utils.data.random_split(dataset_, [train_size, n - train_size])
+
+    train_loader = torch.utils.data.DataLoader(
+        train_set,
+        batch_size=args.batch_size, shuffle=True, **kwargs)
+
+
+    val_loader = torch.utils.data.DataLoader(
+        val_set,
+        batch_size=args.batch_size, shuffle=True, **kwargs)
+
+    torch.manual_seed(7)
+
+    test_loader_ = torch.utils.data.DataLoader(
+        dataset(network_to_use)('../data', train=False,
+                                transform=transforms_dict[network_to_use]
+                                ),
+        batch_size=args.test_batch_size, shuffle=True, num_workers=0, **kwargs)
+
+    #dataiter = iter(test_loader_)
+    #images = dataiter.next()
+    #print(len(test_loader_.dataset), args.test_batch_size, images[0].sum())
+    #exit(0)
+
+    test_loader = (val_loader, test_loader_)
+    print('Dataset sizes: ', len(list(train_loader)),
+          len(list(val_loader)),
+          len(list(test_loader_)))
+
+    torch.manual_seed(7)
+
     test(model, device, test_loader, train_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)
+    print('Save model', args.save_model)
     for epoch in range(1, args.epochs + 1):
+
         train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis)
+
+
         # test(model, device, test_loader)
         if scheduler:
             scheduler.step()
 
-    if args.save_model:
-        torch.save(model.state_dict(), "mnist_cnn.pt")
+
 
 
 if __name__ == '__main__':

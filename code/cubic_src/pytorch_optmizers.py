@@ -60,9 +60,9 @@ class SRC(utils.SRCutils):
         # Check if we are doing enough progress
         print('final accuracy ', -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
         # ToDo: check if condition delta_m <= 0 is required
-        if 0 >= delta_m >= -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
-            print('do cubic final subsolver')
-            delta = self.cubic_final_subsolver()
-            self.param_groups[0]['params'].data.add_(delta)
+        #if 0 >= delta_m >= -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
+        #    print('do cubic final subsolver')
+        #    delta = self.cubic_final_subsolver()
+        #    self.param_groups[0]['params'].data.add_(delta)
 
         return loss

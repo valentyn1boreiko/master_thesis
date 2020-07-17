@@ -11,6 +11,9 @@ from torch import nn, optim
 import numpy as np
 from resnet_cifar import resnet20_cifar
 
+torch.manual_seed(7)
+torch.set_printoptions(precision=10)
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -112,13 +115,13 @@ class AE_MNIST(nn.Module):
         x = self.decoder(x)
         return x
 
-    def reset_parameters(self):
+def weights_init(m):
+    if isinstance(m, nn.Linear):
         #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)
+        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(m.weight)
         bound = math.sqrt(6 / (fan_in + fan_out))
-        if self.bias is not None:
-            nn.init.uniform_(self.bias, -bound, bound)
-        nn.init.uniform_(self.weight, -bound, bound)
+        nn.init.uniform_(m.bias, -bound, bound)
+        nn.init.uniform_(m.weight, -bound, bound)
 
 def to_img(x):
     #x = 0.5 * (x + 1)
@@ -165,13 +168,15 @@ def dataset(network_to_use_):
     elif 'CIFAR' in network_to_use_:
         return CIFAR10
 
+torch.manual_seed(7)
+
 dataset_ = dataset(network_to_use)('../data', train=True, download=True,
                                    transform=transforms_dict[network_to_use])
 n = len(dataset_)
 train_size = int(n*(5/6))
 train_set, val_set = torch.utils.data.random_split(dataset_, [train_size, n-train_size])
 
-test = dataset(network_to_use)('./data', train=False, download=True,
+test = dataset(network_to_use)('../data', train=False, download=True,
                                transform=transforms_dict[network_to_use], )
 
 
@@ -190,7 +195,15 @@ else:
     dev = 'cpu'
 
 print('Using dev', dev)
+start_model_path = None
+# "models/benchmarks_AE_MNIST_Adam_5.pt"
+
 model = models[network_to_use].to(dev)
+torch.manual_seed(7)
+if start_model_path:
+    model.load_state_dict(torch.load(start_model_path))
+else:
+    model.apply(weights_init)
 
 print(model)
 # MNIST opt
@@ -203,7 +216,7 @@ opt = dict(model=model,
            delta_momentum=True,
            delta_momentum_stepsize=0.01,
            initial_penalty_parameter=10,  # 15000, 10
-           verbose=False,
+           verbose=True,
            beta_lipschitz=1,
            eta=0.3,
            sample_size_hessian=10,
@@ -234,30 +247,33 @@ sampling_scheme = dict(fixed_grad=int(optimizer.defaults['sample_size_gradient']
                        #        exp_growth_constant_grad**(iter_ + 1))),
                        )
 
-
+torch.manual_seed(7)
 def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_points_=None):
     n_points = n_points_ if n_points_ else sampling_scheme[sampling_scheme_name]
     print('Loaded ', n_points, 'data points')
     dataloader_args = dict(shuffle=True, batch_size=n_points, num_workers=0)
     train_loader = dataloader_.DataLoader(train_, **dataloader_args)
-    dataloader_args['batch_size'] = 1000
     return dataloader_args, train_loader
+
 
 
 # Init train loader
 dataloader_args, train_loader = init_train_loader(dataloader, train_set)
 test_loader_ = dataloader.DataLoader(test, **dataloader_args)
+
 val_loader = dataloader.DataLoader(val_set, **dataloader_args)
 
-test_loader = (test_loader_, val_loader)
+test_loader = (val_loader, test_loader_)
 
 _, train_loader_hess = init_train_loader(dataloader, train_set, sampling_scheme_name='fixed_hess')
 
 
 #arr = torch.from_numpy(np.load('test_vec.npy')).view(-1)
 #print(loss_fn(model(arr), arr))
-#dataiter = iter(train_loader)
+#dataiter = iter(val_loader)
 #images = dataiter.next()
+#print(len(test_loader_.dataset), int(optimizer.defaults['sample_size_gradient']), images[0].sum())
+#exit(0)
 #arr = images[0][0][0].detach().numpy()
 #print(arr)
 #np.save('test_vec.npy', arr)

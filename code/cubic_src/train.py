@@ -86,10 +86,10 @@ def update_params(dct, src):
 
 
 def main():
+    train_flag = True
     for epoch in range(args.epochs):
         # Set modules in the the network to train mode
         print('epoch ', epoch)
-        model.train()
 
         for batch_idx, (data, target) in enumerate(train_loader):
             # ToDo: can we do so? (We increase the sample size if case 1 is not satisfied)
@@ -117,6 +117,10 @@ def main():
                 data = Variable(data.view(data.size(0), -1))
                 target = data
             optimizer.print_acc(len(data), epoch, batch_idx)
+            if train_flag:
+                model.train()
+                optimizer.model.train()
+                train_flag = False
             #print('Memory used print_acc: ', psutil.virtual_memory().used >> 20)
             #print('Train data size ', data.size())
             optimizer.zero_grad()
