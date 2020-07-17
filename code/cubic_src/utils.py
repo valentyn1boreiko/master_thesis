@@ -152,7 +152,7 @@ class SRCutils(Optimizer):
                              target=None,
                              log_interval=opt.get('log_interval', 600),
                              plot_interval=opt.get('plot_interval', 5),
-                             AdaHess=opt.get('AdaHess', True),
+                             AdaHess=opt.get('AdaHess', False),
                              delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
@@ -345,11 +345,11 @@ class SRCutils(Optimizer):
         print('product', product, product.size())
         if product <= 0:
             print('Negative product!', product)
-        R_c = -torch.abs(product) + torch.sqrt(product ** 2 + 2 * grads_norm / self.defaults['sigma'])
+        R_c = -product + torch.sqrt(product ** 2 + 2 * grads_norm / self.defaults['sigma'])
         print('Rc', R_c)
         delta = -R_c * self.grad / grads_norm
         print(delta.norm(p=2))
-        return delta.detach() if product > 0 else torch.zeros(self.grad.size())
+        return delta.detach()  # if product > 0 else torch.zeros(self.grad.size())
 
     def get_eigen(self, H_bmm, matrix=None, maxIter=5, tol=1e-3, method='lanczos', which='biggest'):
         """
@@ -498,11 +498,12 @@ class SRCutils(Optimizer):
         beta = self.defaults.get('beta_lipschitz') if self.defaults.get('beta_lipschitz') is not None\
             else np.sqrt(self.get_hessian_eigen())
         self.least_eig = self.get_hessian_eigen(which='least', maxIter=5)
+        print('least_eig', self.least_eig)
 
         if self.defaults['AdaHess']:
             self.t_grad += 1
 
-            print("AdaHess grad before", self.grad.norm(p=2))
+            print("AdaHess grad before", self.t_grad, self.grad.norm(p=2))
             self.g_ = (self.b_1 * self.g_ + (1 - self.b_1) * self.grad).detach()
 
             g_hat = (self.g_ / (1 - self.b_1 ** self.t_grad)).detach()
@@ -658,7 +659,7 @@ class SRCutils(Optimizer):
                     ).detach()
                 update_norm = update.norm(p=2)
                 # ToDo - improve / remove empirical checks
-                if (not self.defaults['AdaHess']) and (update_norm >= 2.5 * self.mean_update) and self.mean_update != 0:
+                if False and (not self.defaults['AdaHess']) and (update_norm >= 2.5 * self.mean_update) and self.mean_update != 0:
                     print('update has been increasing too much!', self.mean_update, update_norm)
                     self.running_update = 0
                     break
@@ -942,7 +943,7 @@ class SRCutils(Optimizer):
                 rad = (2 * b.sample(self.grad.size()) - 1).squeeze()
                 D = rad * torch.autograd.grad(gradsh, data_, grad_outputs=rad,
                                      only_inputs=True, retain_graph=True)
-                print('D', D.size(), D)
+                print('D', self.t_hess, D.size(), D)
                 self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
                 hv = torch.sqrt((self.D / (1 - self.b_2 ** self.t)))
             else:
@@ -957,7 +958,7 @@ class SRCutils(Optimizer):
                 rad = (2 * b.sample(self.grad.size()) - 1).squeeze()
                 D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
                                      only_inputs=True, retain_graph=True)
-                D = rad * flatten_tensor_list(D)
+                D = rad * flatten_tensor_list(D) * v_temp
                 print('D', D.norm(p=2))
                 self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
                 print('D', D.norm(p=2))
