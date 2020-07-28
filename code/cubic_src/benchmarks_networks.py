@@ -326,7 +326,7 @@ def main():
     # Training settings
     batch_size = 100
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--network-to-use', type=str, default='CNN_MNIST',  # AE_MNIST, CNN_MNIST, CNN_CIFAR
+    parser.add_argument('--network-to-use', type=str, default='AE_MNIST',  # AE_MNIST, CNN_MNIST, CNN_CIFAR
                         help='which network and problem to use (default: CNN_MNIST)')
     parser.add_argument('--optimizer', type=str, default='Adam',  # SGD, Adam, Adagrad
                         help='which optimizer to use (default: SGD)')

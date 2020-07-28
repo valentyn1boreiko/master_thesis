@@ -36,6 +36,8 @@ parser.add_argument('--subproblem-solver', type=str, default='adaptive',  # adap
                     help='subproblem solver type (default: adaptive)')
 parser.add_argument('--delta-momentum', type=str2bool, default=True,
                     help='if to use momentum for SRC (default: True)')
+parser.add_argument('--AdaHess', type=str2bool, default=True,
+                    help='if to use adaptive Hessian and gradient for SRC (default: True)')
 parser.add_argument('--delta-momentum-stepsize', type=float, default=0.001,
                     help='momentum stepsize (default: 0.002)')
 parser.add_argument('--eta', type=float, default=0.3,
@@ -146,5 +148,6 @@ def main():
 
 
 if __name__ == '__main__':
+    print('args', args)
     optimizer.defaults = update_params(optimizer.defaults, args)
     main()

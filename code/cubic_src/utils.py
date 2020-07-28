@@ -97,7 +97,7 @@ def verbose_decorator_print(verbose):
 
 
 class SRCutils(Optimizer):
-    def __init__(self, params, adaptive_rho=False,
+    def __init__(self, params,
                  batchsize_mode='fixed', opt=None):
 
         if opt is None:
@@ -137,13 +137,13 @@ class SRCutils(Optimizer):
 
         self.defaults = dict(problem=opt.get('problem', 'CNN'),  #matrix_completion, CNN, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
-                             adaptive_rho=adaptive_rho,
+                             adaptive_rho=opt.get('adaptive_rho', False),
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
                              sample_size_hessian=opt.get('sample_size_hessian', 0.03 / 6),
                              sample_size_gradient=opt.get('sample_size_gradient', 0.03 / 6),
-                             eta_1=opt.get('success_treshold', 0.1),
-                             eta_2=opt.get('very_success_treshold', 0.9),
+                             eta_1=opt.get('success_treshold', 0.02),
+                             eta_2=opt.get('very_success_treshold', 0.1),
                              gamma=opt.get('penalty_increase_decrease_multiplier', 2),  # 2
                              sigma=opt.get('initial_penalty_parameter', 0.1),  # 16
                              beta_lipschitz=opt.get('beta_lipschitz', None),
@@ -159,6 +159,7 @@ class SRCutils(Optimizer):
                              innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', False),
                              n_iter=opt.get('n_iter', 4),
+                             block_size=opt.get('block_size', None),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
@@ -198,7 +199,9 @@ class SRCutils(Optimizer):
         return int(self.defaults['sample_size_' + type_])
 
     def get_accuracy(self, loaders):
+        #print(1)
         self.model.eval()
+        #print(2)
         nn = len(loaders)
         acc, correct, total, loss = ([0]*nn, [0]*nn, [0]*nn, [0]*nn)
         torch.manual_seed(7)
@@ -213,20 +216,25 @@ class SRCutils(Optimizer):
                     if self.is_AE:
                         data_ = Variable(data_.view(data_.size(0), -1))
                         target_ = data_
-
+                    #print(3)
                     data_ = data_.to(self.defaults['dev'])
                     target_ = target_.to(self.defaults['dev'])
                     torch.manual_seed(7)
+                    #print(3, 4)
+                    #print(data_.is_cuda, self.defaults['dev'], next(self.model.parameters()).is_cuda, self.model)
                     outputs = self.model(data_)
+                    #print(4)
                     #print(data_.norm(p=2), outputs.norm(p=2))
                     if self.is_AE:
                         loss[l_i] += self.loss_fn(outputs, target_).item() * n
                     elif 'MNIST' in self.defaults['problem']:
                         loss[l_i] += self.loss_fn(outputs, target_, reduction='sum').item()
+                        #print(4)
                     elif 'CIFAR' in self.defaults['problem']:
                         loss[l_i] += self.loss_fn(outputs, target_).item()
                     # Get prediction
                     _, predicted = torch.max(outputs.data, 1)
+                    #print(5)
                     # Total number of labels
                     total[l_i] += len(target_)
                     # Total correct predictions
@@ -259,6 +267,7 @@ class SRCutils(Optimizer):
         if self.first_entry:
             self.f_name = self.mydir + '/loss_src' \
                           + '_delta=' + str(self.defaults['delta_momentum']) \
+                          + '_AdaHess=' + str(self.defaults['AdaHess']) \
                           + '_sigma=' + str(self.defaults['sigma']) \
                           + '_delta_step=' + str(self.defaults['delta_momentum_stepsize']) \
                           + '_eta=' + str(self.defaults['eta']) \
@@ -395,7 +404,7 @@ class SRCutils(Optimizer):
                 q_last = flatten_tensor_list([torch.zeros(p.size(), device=p.device) for p in params])
             else:
                 q_last = torch.zeros(matrix.size()[0])
-            q_s = [q_last]
+            #q_s = [q_last]
             a_s = []
             b_s = []
             for _ in range(maxIter):
@@ -406,7 +415,7 @@ class SRCutils(Optimizer):
                 a = torch.dot(Hv, q)
                 Hv -= (b * q_last + a * q)
                 q_last = q
-                q_s.append(q_last)
+                #q_s.append(q_last)
                 b = torch.norm(Hv)
                 a_s.append(a)
                 b_s.append(b)
@@ -484,7 +493,7 @@ class SRCutils(Optimizer):
     def m_delta(self, delta):
         return (self.grad @ delta + \
                0.5 * self.hessian_vector_product(delta) @ delta + \
-               self.defaults['sigma'] / 6 * delta.norm(p=2)).detach()
+               self.defaults['sigma'] / 6 * delta.norm(p=2) ** 3).detach()
 
 
     def beta_adapt(self, f_grad_delta, delta_):
@@ -515,22 +524,24 @@ class SRCutils(Optimizer):
 
         print('hessian eigenvalue is calculated', beta)
 
-        grad_norm = self.grad.norm(p=2)
+        grad_norm = self.grad.norm(p=2).detach()
         print('grad norm ', grad_norm.detach().cpu().numpy(), beta ** 2 / self.defaults['sigma'])
 
         eps_ = 0.5
         r = np.sqrt(self.defaults['grad_tol'] / (9 * self.defaults['sigma']))
         # ToDo: Check this constant (now beta ** 2 is changed to beta)
-
+        self.computations_done += 1
+        self.computations_done_times_samples += \
+            self.defaults['sample_size_gradient']
         #if self.defaults['delta_momentum'] or grad_norm >= beta ** 2 / self.defaults['sigma']:
         self.case_n = 1
         print('case 1')
         # Get the Cauchy point
         delta = self.cauchy_point()
         #self.computations_done[-1] += self.get_num_points() + self.get_num_points('hessian')
-        self.computations_done += 1 + 1
+        self.computations_done += 1
         self.computations_done_times_samples += \
-            self.defaults['sample_size_gradient'] + self.defaults['sample_size_hessian']
+            self.defaults['sample_size_hessian']
 
         print('delta_m ', self.m_delta(delta))
         if (not self.defaults['delta_momentum']):  # and grad_norm < beta ** 2 / self.defaults['sigma']:
@@ -551,7 +562,7 @@ class SRCutils(Optimizer):
             unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
             # ToDo: should I use the perturbation ball?
             ##g_ = self.m_grad(self.grad, delta) #+ 2*unif_sphere
-            g_ = self.grad + unif_sphere
+            g_ = (self.grad + unif_sphere).detach()
 
 
 
@@ -573,9 +584,7 @@ class SRCutils(Optimizer):
             if self.defaults['innerAdam']:
                 m = 0
                 v = 0
-            self.computations_done += 1
-            self.computations_done_times_samples += \
-                self.defaults['sample_size_gradient']
+
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
                 self.computations_done += 1
@@ -654,7 +663,7 @@ class SRCutils(Optimizer):
                     print('Non-adaptive', g_.norm(p=2), hvp.norm(p=2), delta.norm(p=2))
                     update = eta * (
                             g_ +
-                            self.hessian_vector_product(delta) +
+                            hvp +
                             (self.defaults['sigma'] / 2) * delta.norm(p=2) * delta
                     ).detach()
                 update_norm = update.norm(p=2)
@@ -676,16 +685,64 @@ class SRCutils(Optimizer):
                     self.model(
                         self.defaults['train_data']
                     ),
-                    self.defaults['target'])
+                    self.defaults['target']).detach()
                 self.update_params(delta)
                 current_f = self.loss_fn(
                     self.model(
                         self.defaults['train_data']
                     ),
-                    self.defaults['target'])
+                    self.defaults['target']).detach()
+
                 print('delta_m = ', self.m_delta(delta), delta.norm(p=2), (delta - delta_old).norm(p=2),
                       update.norm(p=2), self.mean_update, previous_f-current_f)
                 self.update_params(-delta)
+
+            # Adaptive rho as in "Sub-sampled Cubic Regularization for Non-convex Optimization"
+            if self.defaults['adaptive_rho']:
+                self.computations_done += 3
+                # cost of function evaluation
+                self.computations_done_times_samples += \
+                    2 * self.defaults['sample_size_gradient']
+                # cost of m_delta evaluation
+                self.computations_done_times_samples += \
+                    self.defaults['sample_size_hessian']
+                previous_f = self.loss_fn(
+                    self.model(
+                        self.defaults['train_data']
+                    ),
+                    self.defaults['target']).detach()
+                self.update_params(delta)
+                current_f = self.loss_fn(
+                    self.model(
+                        self.defaults['train_data']
+                    ),
+                    self.defaults['target']).detach()
+                self.update_params(-delta)
+
+                m_delta = self.m_delta(delta).detach()
+                rho = (previous_f - current_f) / (previous_f - m_delta)
+                print('adaptive rho: data', previous_f, current_f, m_delta,
+                      self.defaults['sigma'])
+
+                if rho >= self.defaults['eta_1']:
+                    print('adaptive_rho: bigger that eta_1 - update')
+                else:
+                    print('adaptive_rho: smaller that eta_1 - no update')
+                    delta = torch.zeros(self.grad.size())
+
+                if rho > self.defaults['eta_2']:
+                    print('adaptive_rho: bigger that eta_2 - decrease sigma')
+                    self.defaults['sigma'] = max(min(self.defaults['sigma'], grad_norm), 1e-16)
+                elif self.defaults['eta_2'] >= rho >= self.defaults['eta_1']:
+                    print('adaptive_rho: bigger that eta_1, '
+                          'less than eta_2 - do not update sigma')
+                    pass
+                else:
+                    print('adaptive_rho: less that eta_1 and no improvement - increase sigma',
+                          rho, self.defaults['eta_1'])
+                    self.defaults['sigma'] = min(self.defaults['gamma'] \
+                                             * self.defaults['sigma'], 1000)
+
             if self.running_update != 0:
                 self.mean_update = self.running_update / int(T_eps)
                 self.running_update = 0
@@ -954,11 +1011,21 @@ class SRCutils(Optimizer):
             if self.defaults['AdaHess']:
                 print('Start AdaHess for hvp')
                 self.t_hess += 1
+                # Temporal & spatial averaging
                 b = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
                 rad = (2 * b.sample(self.grad.size()) - 1).squeeze()
                 D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
                                      only_inputs=True, retain_graph=True)
-                D = rad * flatten_tensor_list(D) * v_temp
+                D = (rad * flatten_tensor_list(D))
+                n_ = len(D)
+                b = self.defaults['block_size']
+                if b is not None:
+                    D = torch.cat((D[:b * (n_ // b)].reshape(-1, b)
+                               .mean(1).repeat_interleave(b), D[b * (n_ // b):]))\
+                        * v_temp
+                else:
+                    D = D * v_temp
+
                 print('D', D.norm(p=2))
                 self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
                 print('D', D.norm(p=2))
