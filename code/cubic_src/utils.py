@@ -137,6 +137,7 @@ class SRCutils(Optimizer):
 
         self.defaults = dict(problem=opt.get('problem', 'CNN'),  #matrix_completion, CNN, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
+                             activation=opt.get('activation', 'swish'),
                              adaptive_rho=opt.get('adaptive_rho', False),
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
                              batchsize_mode=batchsize_mode,
@@ -168,7 +169,8 @@ class SRCutils(Optimizer):
         self.first_entry = True
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
         self.is_w_function = self.defaults['problem'] == 'w-function'
-        self.is_mnist = 'CNN' in self.defaults['problem']
+        self.is_classification = any(map(self.defaults['problem'].__contains__,
+                                         ['CNN', 'LIN_REG']))
         self.is_AE = 'AE' in self.defaults['problem']
         self.mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         try:
@@ -228,7 +230,15 @@ class SRCutils(Optimizer):
                     if self.is_AE:
                         loss[l_i] += self.loss_fn(outputs, target_).item() * n
                     elif 'MNIST' in self.defaults['problem']:
-                        loss[l_i] += self.loss_fn(outputs, target_, reduction='sum').item()
+                        #print(target_, outputs)
+                        self.y_onehot.zero_()
+                        self.y_onehot.scatter_(1, target_.view(-1, 1), 1)
+                        self.y_onehot.scatter_(1, target_.view(-1, 1), 1)
+                        #print('Outputs!', outputs[:3], self.y_onehot[:3])
+
+                        print(outputs.size(), self.y_onehot.size())
+                        loss[l_i] += self.loss_fn(outputs, self.y_onehot).item() * n
+                        #loss[l_i] += self.loss_fn(outputs, target_).item() * n # reduction = 'sum'
                         #print(4)
                     elif 'CIFAR' in self.defaults['problem']:
                         loss[l_i] += self.loss_fn(outputs, target_).item()
@@ -258,6 +268,7 @@ class SRCutils(Optimizer):
 
 
         print("All points {}".format(total))
+
         if nn == 1:
             loss = loss[0]
             acc = acc[0]
@@ -265,6 +276,11 @@ class SRCutils(Optimizer):
 
     def print_acc(self, batch_size, epoch, batch_idx):
         if self.first_entry:
+            n_digits = 10
+            self.y_onehot = torch.FloatTensor(
+                int(self.defaults['sample_size_gradient']), n_digits)
+            self.y_onehot_hess = torch.FloatTensor(
+                int(self.defaults['sample_size_hessian']), n_digits)
             self.f_name = self.mydir + '/loss_src' \
                           + '_delta=' + str(self.defaults['delta_momentum']) \
                           + '_AdaHess=' + str(self.defaults['AdaHess']) \
@@ -275,7 +291,8 @@ class SRCutils(Optimizer):
                           + '_' + self.defaults['subproblem_solver'] \
                           + '_H_size=' + str(self.defaults['sample_size_hessian']) \
                           + '_g_size=' + str(self.defaults['sample_size_gradient'])
-            blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess', 'train_loader_hess']
+            blacklist_keys = ['target', 'train_data', 'dataloader_iterator_hess',
+                              'train_loader_hess', 'test_loader', 'train_loader']
             settings_dict = dict([(key, val) for key, val in self.defaults.items() if key not in blacklist_keys])
             json.dump(settings_dict, open(self.mydir + '/settings.json', 'w'))
 
@@ -289,8 +306,8 @@ class SRCutils(Optimizer):
         #                                                                                             test_acc))
 
         if batch_idx % self.defaults['log_interval'] == 0:
-            test_loss, test_acc = self.get_accuracy(config.test_loader)
-            train_loss, train_acc = self.get_accuracy([config.train_loader])
+            test_loss, test_acc = self.get_accuracy(self.defaults['test_loader'])
+            train_loss, train_acc = self.get_accuracy([self.defaults['train_loader']])
 
             if self.is_AE:
                 if False and batch_idx % self.defaults['plot_interval'] == 0:
@@ -681,17 +698,21 @@ class SRCutils(Optimizer):
                     self.running_update = 0
                     break
 
+                self.y_onehot.zero_()
+                self.y_onehot.scatter_(1, self.defaults['target'].view(-1, 1), 1)
+
                 previous_f = self.loss_fn(
                     self.model(
                         self.defaults['train_data']
                     ),
-                    self.defaults['target']).detach()
+                    self.y_onehot).detach()
                 self.update_params(delta)
                 current_f = self.loss_fn(
                     self.model(
                         self.defaults['train_data']
                     ),
-                    self.defaults['target']).detach()
+                    self.y_onehot).detach()
+
 
                 print('delta_m = ', self.m_delta(delta), delta.norm(p=2), (delta - delta_old).norm(p=2),
                       update.norm(p=2), self.mean_update, previous_f-current_f)
@@ -950,10 +971,7 @@ class SRCutils(Optimizer):
                 data, target = next(self.defaults['dataloader_iterator_hess'])
             except StopIteration:
                 print('exception')
-                if self.defaults['problem'] == 'matrix_completion':
-                    dataloader_iterator_hess = iter(self.defaults['train_loader_hess'])
-                else:
-                    dataloader_iterator_hess = iter(config.train_loader_hess)
+                dataloader_iterator_hess = iter(self.defaults['train_loader_hess'])
                 data, target = next(dataloader_iterator_hess)
 
             if self.is_AE:
@@ -971,9 +989,13 @@ class SRCutils(Optimizer):
         if self.is_matrix_completion:
             data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
-        elif self.is_mnist or self.is_AE:  # and self.first_hv:
+        elif self.is_classification or self.is_AE:  # and self.first_hv:
             outputs = self.model(data)
-            self.loss_fn(outputs, target).backward(create_graph=True)
+            self.y_onehot_hess.zero_()
+            self.y_onehot_hess.scatter_(1, target.view(-1, 1), 1)
+            #print(outputs, self.y_onehot)
+            self.loss_fn(outputs, self.y_onehot_hess).backward(create_graph=True)
+            #self.loss_fn(outputs, target).backward(create_graph=True)
             # self.first_hv = False
         elif self.is_w_function:  # and self.first_hv:
             self.model(x[0]).backward(create_graph=True)

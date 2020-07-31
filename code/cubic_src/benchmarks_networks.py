@@ -18,7 +18,21 @@ matplotlib.use('Agg')
 
 torch.manual_seed(7)
 torch.set_printoptions(precision=10)
+batch_size = 100
+n_digits = 10
+y_onehot = torch.FloatTensor(batch_size, n_digits)
 
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+
+def LinearRegression():
+    model_ = nn.Sequential(
+        Flatten(),
+        nn.Linear(784, 10)
+    )
+    return model_
 
 class Net(nn.Module):
     def __init__(self):
@@ -179,7 +193,11 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
             target = data
 
         output = model(data)
-        loss = criterion(output, target)
+        y_onehot.zero_()
+        y_onehot.scatter_(1, target.view(-1, 1), 1)
+
+        loss = criterion(output, y_onehot)
+        #loss = criterion(output, target)
         loss.backward()
         optimizer.step()
         if batch_idx * len(data) % args.log_interval == 0 and batch_idx != 0:
@@ -202,7 +220,8 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
     model.eval()
     test_loss, train_loss = [0, 0], 0
     correct, train_correct = 0, 0
-    is_CNN = 'CNN' in network_to_use
+    is_classification = any(map(network_to_use.__contains__,
+                                ['CNN', 'LIN_REG']))
     is_AE = network_to_use == 'AE_MNIST'
     torch.manual_seed(7)
     with torch.no_grad():
@@ -218,20 +237,25 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                 torch.manual_seed(7)
                 output = model(data)
                 #print(data.norm(p=2), output.norm(p=2))
-                if is_CNN:
+                if is_classification:
                     if 'MNIST' in network_to_use:
-                        test_loss[l_i] += criterion(output, target, reduction='sum').item()  # sum up batch loss
+                        y_onehot.zero_()
+                        y_onehot.scatter_(1, target.view(-1, 1), 1)
+                        #print(y_onehot[:3], output[:3])
+                        test_loss[l_i] += criterion(output, y_onehot).item() * n
+                        #test_loss[l_i] += criterion(output, target).item() * n  # sum up batch loss #  reduction='sum'
                     elif 'CIFAR' in network_to_use:
                         test_loss[l_i] += criterion(output, target).item()
                 elif is_AE:
                     test_loss[l_i] += criterion(output, target).item() * n
-                if is_CNN:
+                if is_classification:
                     pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                     correct += pred.eq(target.view_as(pred)).sum().item()
 
             test_loss[l_i] /= len(test_loader.dataset)
             #print(test_loss[l_i], len(test_loader.dataset), model.training)
             #exit(0)
+
 
     if is_AE:
         _img = to_img(output)[2].reshape(28, 28)
@@ -252,14 +276,18 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                 target = data
 
             output = model(data)
-            if is_CNN:
+            if is_classification:
                 if 'MNIST' in network_to_use:
-                    train_loss += criterion(output, target, reduction='sum').item()  # sum up batch loss
+                    y_onehot.zero_()
+                    y_onehot.scatter_(1, target.view(-1, 1), 1)
+
+                    train_loss += criterion(output, y_onehot).item() * n
+                    #train_loss += criterion(output, target).item() * n  # sum up batch loss # , reduction='sum'
                 elif 'CIFAR' in network_to_use:
                     train_loss += criterion(output, target).item()
             elif is_AE:
                 train_loss += criterion(output, target).item() * n
-            if is_CNN:
+            if is_classification:
                 pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 train_correct += pred.eq(target.view_as(pred)).sum().item()
 
@@ -275,7 +303,7 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
 
         train_img = (_img, _img_2, _img_target, _img_target_2)
 
-    if is_CNN:
+    if is_classification:
         print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
             test_loss[1], correct, len(test_loader.dataset),
             100. * correct / len(test_loader.dataset)))
@@ -324,9 +352,10 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
 
 def main():
     # Training settings
-    batch_size = 100
+
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--network-to-use', type=str, default='AE_MNIST',  # AE_MNIST, CNN_MNIST, CNN_CIFAR
+    parser.add_argument('--network-to-use', type=str, default='AE_MNIST',
+                        # AE_MNIST, CNN_MNIST, CNN_CIFAR, LIN_REG_MNIST
                         help='which network and problem to use (default: CNN_MNIST)')
     parser.add_argument('--optimizer', type=str, default='Adam',  # SGD, Adam, Adagrad
                         help='which optimizer to use (default: SGD)')
@@ -374,17 +403,22 @@ def main():
         ]),
         'CNN_CIFAR': transforms.Compose(
             [transforms.ToTensor(),
-             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]),
+        'LIN_REG_MNIST': transforms.Compose([
+            transforms.ToTensor(),
+            # transforms.Normalize((0.5,), (0.5,))
+        ])
     }
-
 
     models = {'AE_MNIST': AE_MNIST(),  # AE_MNIST_torch, AE_MNIST
               'CNN_MNIST': Net(),
-              'CNN_CIFAR': CIFAR_Net()}
+              'CNN_CIFAR': CIFAR_Net(),
+              'LIN_REG_MNIST': LinearRegression()}
 
     criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
                 'CNN_MNIST': F.nll_loss,
-                'CNN_CIFAR': nn.CrossEntropyLoss()}
+                'CNN_CIFAR': nn.CrossEntropyLoss(),
+                'LIN_REG_MNIST': nn.MSELoss(reduction='mean')}  # nn.CrossEntropyLoss(reduction='mean')}
 
 
     model = models[network_to_use].to(device)

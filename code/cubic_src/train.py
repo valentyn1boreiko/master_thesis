@@ -44,6 +44,10 @@ parser.add_argument('--eta', type=float, default=0.3,
                     help='learning rate for the inner subproblem (default: 0.3)')
 parser.add_argument('--sigma', type=float, default=10,
                     help='Hessian Lipschitz constant (default: 10)')
+parser.add_argument('--sample-size-hessian', type=int, default=100,
+                    help='Hessian batch size')
+parser.add_argument('--sample-size-gradient', type=int, default=100,
+                    help='gradient batch size')
 parser.add_argument('--epochs', type=int, default=14, metavar='N',
                     help='number of epochs to train (default: 14)')
 
@@ -76,8 +80,24 @@ def sizeof_fmt(num, suffix='B'):
 
 last_model = copy.deepcopy(model)
 
+
+# Init train loader
+dataloader_args, train_loader = init_train_loader(dataloader, train_set, n_points_=args.sample_size_gradient)
+test_loader_ = dataloader.DataLoader(test, **dataloader_args)
+
+val_loader = dataloader.DataLoader(val_set, **dataloader_args)
+
+test_loader = (val_loader, test_loader_)
+
+_, train_loader_hess = init_train_loader(dataloader, train_set, n_points_=args.sample_size_hessian)
+
+
 dataloader_iterator = iter(train_loader)
 dataloader_iterator_hess = iter(train_loader_hess)
+optimizer.defaults['dataloader_iterator_hess'] = dataloader_iterator_hess
+optimizer.defaults['train_loader_hess'] = train_loader_hess
+optimizer.defaults['test_loader'] = test_loader
+optimizer.defaults['train_loader'] = train_loader
 # We have T_out iterations
 #tracker = SummaryTracker()
 
@@ -89,6 +109,9 @@ def update_params(dct, src):
 
 def main():
     train_flag = True
+    n_digits = 10
+    y_onehot = torch.FloatTensor(int(optimizer.defaults['sample_size_gradient']), n_digits)
+
     for epoch in range(args.epochs):
         # Set modules in the the network to train mode
         print('epoch ', epoch)
@@ -128,11 +151,15 @@ def main():
             optimizer.zero_grad()
             #print('Memory used zero_grad: ', psutil.virtual_memory().used >> 20)
             outputs = model(data)
-            loss_fn(outputs, target).backward(create_graph=True)
+
+            y_onehot.zero_()
+            y_onehot.scatter_(1, target.view(-1, 1), 1)
+            loss_fn(outputs, y_onehot).backward(create_graph=True)
+            #loss_fn(outputs, target).backward(create_graph=True)
             #print('Memory used loss: ', psutil.virtual_memory().used >> 20)
             optimizer.defaults['train_data'] = data
             optimizer.defaults['target'] = target
-            optimizer.defaults['dataloader_iterator_hess'] = dataloader_iterator_hess
+
 
             optimizer.step()
             #print('Memory used step: ', psutil.virtual_memory().used >> 20)

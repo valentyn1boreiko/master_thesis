@@ -15,9 +15,30 @@ torch.manual_seed(7)
 torch.set_printoptions(precision=10)
 
 
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+
+def LinearRegression():
+    model_ = nn.Sequential(
+        Flatten(),
+        nn.Linear(784, 10)
+    )
+    return model_
+
+# Source - https://github.com/pytorch/examples/blob/master/mnist/main.py
+
+
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, activation_='swish'):
         super(Net, self).__init__()
+        activation_dict = {
+            'relu': F.relu,
+            'softplus': F.softplus,
+            'swish': lambda x: x * torch.sigmoid(x),
+        }
+        self.activation = activation_dict[activation_]
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout2d(0.25)
@@ -27,14 +48,14 @@ class Net(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = F.relu(x)
+        x = self.activation(x)
         x = self.conv2(x)
-        x = F.relu(x)
+        x = self.activation(x)
         x = F.max_pool2d(x, 2)
         x = self.dropout1(x)
         x = torch.flatten(x, 1)
         x = self.fc1(x)
-        x = F.relu(x)
+        x = self.activation(x)
         x = self.dropout2(x)
         x = self.fc2(x)
         output = F.log_softmax(x, dim=1)
@@ -88,25 +109,32 @@ class CONV_AE_MNIST(nn.Module):
 
 
 class AE_MNIST(nn.Module):
-    def __init__(self):
+    def __init__(self, activation_='softplus'):
         super(AE_MNIST, self).__init__()
+        activation_dict = {
+            'relu': nn.ReLU,
+            'softplus': nn.Softplus,
+            # ToDo: correct with the wrapper!
+            'swish': nn.Sigmoid
+        }
+        self.activation = activation_dict[activation_]
         self.encoder = nn.Sequential(
             nn.Linear(28 * 28, 512),
-            nn.Softplus(),
+            self.activation(),
             nn.Linear(512, 256),
-            nn.Softplus(),
+            self.activation(),
             nn.Linear(256, 128),
-            nn.Softplus(),
+            self.activation(),
             nn.Linear(128, 32),
-            nn.Softplus()
+            self.activation()
         )
         self.decoder = nn.Sequential(
             nn.Linear(32, 128),
-            nn.Softplus(),
+            self.activation(),
             nn.Linear(128, 256),
-            nn.Softplus(),
+            self.activation(),
             nn.Linear(256, 512),
-            nn.Softplus(),
+            self.activation(),
             nn.Linear(512, 28 * 28),
             nn.Sigmoid())
 
@@ -115,6 +143,7 @@ class AE_MNIST(nn.Module):
         x = self.decoder(x)
         return x
 
+# Uniform Glorot initializer
 def weights_init(m):
     if isinstance(m, nn.Linear):
         #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
@@ -130,7 +159,8 @@ def to_img(x):
     return x
 
 
-network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR
+network_to_use = 'LIN_REG_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR, LIN_REG_MNIST
+activation = 'swish'  # swish, softplus, relu
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -138,6 +168,10 @@ transforms_dict = {
                            transforms.Normalize((0.1307,), (0.3081,))
                        ]),
         'AE_MNIST': transforms.Compose([
+                           transforms.ToTensor(),
+                           #transforms.Normalize((0.5,), (0.5,))
+                       ]),
+        'LIN_REG_MNIST': transforms.Compose([
                            transforms.ToTensor(),
                            #transforms.Normalize((0.5,), (0.5,))
                        ]),
@@ -150,15 +184,17 @@ transforms_dict = {
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     }
 
-models = {'AE_MNIST': AE_MNIST(),
+models = {'AE_MNIST': AE_MNIST(activation),
           'CONV_AE_MNIST': CONV_AE_MNIST(),
-          'CNN_MNIST': Net(),
-          'CNN_CIFAR': CIFAR_Net()}
+          'CNN_MNIST': Net(activation),
+          'CNN_CIFAR': CIFAR_Net(),
+          'LIN_REG_MNIST': LinearRegression()}
 
 criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
             'CONV_AE_MNIST': nn.MSELoss(reduction='mean'),
             'CNN_MNIST': F.nll_loss,
-            'CNN_CIFAR': nn.CrossEntropyLoss()}
+            'CNN_CIFAR': nn.CrossEntropyLoss(),
+            'LIN_REG_MNIST': nn.MSELoss(reduction='mean')}  # nn.CrossEntropyLoss(reduction='mean')}
 
 
 # Loading the data
@@ -209,6 +245,7 @@ print(model)
 # MNIST opt
 opt = dict(model=model,
            loss_fn=loss_fn,
+           activation=activation,
            n=n,
            log_interval=100,
            problem=network_to_use,
@@ -219,7 +256,7 @@ opt = dict(model=model,
            verbose=True,
            beta_lipschitz=1,
            eta=0.3,
-           sample_size_hessian=10,
+           sample_size_hessian=100,
            sample_size_gradient=100
            )
 
@@ -255,17 +292,6 @@ def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_
     train_loader = dataloader_.DataLoader(train_, **dataloader_args)
     return dataloader_args, train_loader
 
-
-
-# Init train loader
-dataloader_args, train_loader = init_train_loader(dataloader, train_set)
-test_loader_ = dataloader.DataLoader(test, **dataloader_args)
-
-val_loader = dataloader.DataLoader(val_set, **dataloader_args)
-
-test_loader = (val_loader, test_loader_)
-
-_, train_loader_hess = init_train_loader(dataloader, train_set, sampling_scheme_name='fixed_hess')
 
 
 #arr = torch.from_numpy(np.load('test_vec.npy')).view(-1)
