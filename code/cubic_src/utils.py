@@ -7,15 +7,20 @@ import time
 import numpy as np
 import pandas as pd
 import scipy.linalg as la
+from scipy.sparse.linalg import minres
 from torch.autograd import Variable
 from torch.optim.optimizer import Optimizer
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, datetime
+from scipy.sparse.linalg import LinearOperator
 # Comment it out while using matrix_completion.py or w-function.py instead of train.py
 import config
 
+temp_dot = torch.dot
+torch.dot = None
+torch.dot = lambda x, y: temp_dot(x.to(torch.float32), y.to(torch.float32))
 
 def lanczos_tridiag_to_diag(t_mat):
     """
@@ -229,14 +234,14 @@ class SRCutils(Optimizer):
                     #print(data_.norm(p=2), outputs.norm(p=2))
                     if self.is_AE:
                         loss[l_i] += self.loss_fn(outputs, target_).item() * n
-                    elif 'MNIST' in self.defaults['problem']:
+                    elif 'LIN_REG' in self.defaults['problem']:
                         #print(target_, outputs)
                         self.y_onehot.zero_()
                         self.y_onehot.scatter_(1, target_.view(-1, 1), 1)
                         self.y_onehot.scatter_(1, target_.view(-1, 1), 1)
                         #print('Outputs!', outputs[:3], self.y_onehot[:3])
 
-                        print(outputs.size(), self.y_onehot.size())
+                        #print(outputs.size(), self.y_onehot.size())
                         loss[l_i] += self.loss_fn(outputs, self.y_onehot).item() * n
                         #loss[l_i] += self.loss_fn(outputs, target_).item() * n # reduction = 'sum'
                         #print(4)
@@ -367,7 +372,7 @@ class SRCutils(Optimizer):
         # ToDo: replace hessian-vec product with the upper bound (beta)
         grads_norm = self.grad.norm(p=2)
         print('Cauchy point', grads_norm)
-        product = self.hessian_vector_product(self.grad) @ self.grad / (self.defaults['sigma'] * grads_norm ** 2)
+        product = torch.dot(self.hessian_vector_product(self.grad), self.grad) / (self.defaults['sigma'] * grads_norm ** 2)  # @
         print('product', product, product.size())
         if product <= 0:
             print('Negative product!', product)
@@ -428,7 +433,9 @@ class SRCutils(Optimizer):
                 if which == 'biggest':
                     self.computations_done += 1
                     self.computations_done_times_samples += self.defaults['sample_size_gradient']
+                print('before', q.dtype)
                 Hv = H_bmm(q)
+                print(Hv.dtype, q.dtype)
                 a = torch.dot(Hv, q)
                 Hv -= (b * q_last + a * q)
                 q_last = q
@@ -498,8 +505,10 @@ class SRCutils(Optimizer):
 
     def m(self, g_, x):
         delta_ = x - flatten_tensor_list(self.params)
-        return (g_.t() @ delta_ + \
-               0.5 * self.hessian_vector_product(delta_).t() @ delta_ + \
+        # @
+        # @
+        return (torch.dot(g_.t(), delta_) + \
+               0.5 * torch.dot(self.hessian_vector_product(delta_).t(), delta_) + \
                (self.defaults['sigma'] / 6) * delta_.norm(p=2) ** 3).detach()
 
     def m_grad(self, g_, delta_):
@@ -508,9 +517,12 @@ class SRCutils(Optimizer):
                (self.defaults['sigma'] / 2) * delta_.norm(p=2) * delta_).detach()
 
     def m_delta(self, delta):
-        return (self.grad @ delta + \
-               0.5 * self.hessian_vector_product(delta) @ delta + \
-               self.defaults['sigma'] / 6 * delta.norm(p=2) ** 3).detach()
+        grad_term = torch.dot(self.grad, delta)  # @
+        hess_term = 0.5 * torch.dot(self.hessian_vector_product(delta), delta)  # @
+        reg_term = self.defaults['sigma'] / 6 * delta.norm(p=2) ** 3
+        return (grad_term + \
+                hess_term + \
+                reg_term).detach()
 
 
     def beta_adapt(self, f_grad_delta, delta_):
@@ -675,7 +687,7 @@ class SRCutils(Optimizer):
                     #else:
                     #    print(abs(self.m_delta(delta)))
 
-                else:
+                elif self.defaults['subproblem_solver'] == 'non-adaptive':
                     hvp = self.hessian_vector_product(delta)
                     print('Non-adaptive', g_.norm(p=2), hvp.norm(p=2), delta.norm(p=2))
                     update = eta * (
@@ -683,6 +695,15 @@ class SRCutils(Optimizer):
                             hvp +
                             (self.defaults['sigma'] / 2) * delta.norm(p=2) * delta
                     ).detach()
+                elif self.defaults['subproblem_solver'] == 'minres':
+                    n = delta.size()[0]
+                    hvp = LinearOperator((n, n), matvec=self.numpy_hessian_vector_product)
+                    delta_new, exitCode = minres(hvp, -g_, shift=
+                    -((self.defaults['sigma'] / 2) * delta.norm(p=2)).detach().numpy())
+                    update = delta - torch.from_numpy(delta_new)
+                    #self.grad = self.grad.to(torch.float64)
+                    print(exitCode, update.norm(p=2), update)
+                    #exit(0)
                 update_norm = update.norm(p=2)
                 # ToDo - improve / remove empirical checks
                 if False and (not self.defaults['AdaHess']) and (update_norm >= 2.5 * self.mean_update) and self.mean_update != 0:
@@ -699,19 +720,20 @@ class SRCutils(Optimizer):
                     break
 
                 self.y_onehot.zero_()
-                self.y_onehot.scatter_(1, self.defaults['target'].view(-1, 1), 1)
+                if 'LIN_REG' in self.defaults['problem']:
+                    self.y_onehot.scatter_(1, self.defaults['target'].view(-1, 1), 1)
 
                 previous_f = self.loss_fn(
                     self.model(
                         self.defaults['train_data']
                     ),
-                    self.y_onehot).detach()
+                    self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
                 self.update_params(delta)
                 current_f = self.loss_fn(
                     self.model(
                         self.defaults['train_data']
                     ),
-                    self.y_onehot).detach()
+                    self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
 
 
                 print('delta_m = ', self.m_delta(delta), delta.norm(p=2), (delta - delta_old).norm(p=2),
@@ -955,6 +977,12 @@ class SRCutils(Optimizer):
                     self.defaults['sigma'] = self.defaults['sigma'] * self.defaults['gamma']
                 print('Unsuccessful iteration', self.defaults['sigma'])
         """
+    def numpy_hessian_vector_product(self, v):
+        input = torch.from_numpy(v).to(torch.float32)
+        output = self.hessian_vector_product(input)\
+            .detach().cpu().numpy()
+        return output
+
     def hessian_vector_product(self, v):
         """
         compute the hessian vector product of Hv, where
@@ -969,8 +997,8 @@ class SRCutils(Optimizer):
         if not self.is_w_function:
             try:
                 data, target = next(self.defaults['dataloader_iterator_hess'])
-            except StopIteration:
-                print('exception')
+            except Exception as e:  #StopIteration:
+                print('exception', str(e))
                 dataloader_iterator_hess = iter(self.defaults['train_loader_hess'])
                 data, target = next(dataloader_iterator_hess)
 
@@ -992,9 +1020,11 @@ class SRCutils(Optimizer):
         elif self.is_classification or self.is_AE:  # and self.first_hv:
             outputs = self.model(data)
             self.y_onehot_hess.zero_()
-            self.y_onehot_hess.scatter_(1, target.view(-1, 1), 1)
+            if 'LIN_REG' in self.defaults['problem']:
+                self.y_onehot_hess.scatter_(1, target.view(-1, 1), 1)
             #print(outputs, self.y_onehot)
-            self.loss_fn(outputs, self.y_onehot_hess).backward(create_graph=True)
+            self.loss_fn(outputs, self.y_onehot_hess if 'LIN_REG' in self.defaults['problem'] else target)\
+                .backward(create_graph=True)
             #self.loss_fn(outputs, target).backward(create_graph=True)
             # self.first_hv = False
         elif self.is_w_function:  # and self.first_hv:
@@ -1007,7 +1037,10 @@ class SRCutils(Optimizer):
         #print('grads ', len(gradsh), gradsh)
         #print('params ', len(params), params)
         #print(len(gradsh), len(params), v.shape)
-        v_temp = v.clone()
+        try:
+            v_temp = v.clone()
+        except:
+            v_temp = np.copy(v)
         # ToDo - super dangerous, only for matrix_completion
         if self.is_matrix_completion:
             if len(gradsh) < len(v):
@@ -1040,18 +1073,22 @@ class SRCutils(Optimizer):
                                      only_inputs=True, retain_graph=True)
                 D = (rad * flatten_tensor_list(D))
                 n_ = len(D)
-                b = self.defaults['block_size']
-                if b is not None:
-                    D = torch.cat((D[:b * (n_ // b)].reshape(-1, b)
-                               .mean(1).repeat_interleave(b), D[b * (n_ // b):]))\
-                        * v_temp
-                else:
-                    D = D * v_temp
 
+                # Before the code-block was here
                 print('D', D.norm(p=2))
                 self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
                 print('D', D.norm(p=2))
                 hv = torch.sqrt((self.D / (1 - self.b_2 ** self.t_hess)))
+
+                # Now the code-block is here (D -> hv)
+                b = self.defaults['block_size']
+                if b is not None:
+                    hv = torch.cat((hv[:b * (n_ // b)].reshape(-1, b)
+                                   .mean(1).repeat_interleave(b), hv[b * (n_ // b):])) \
+                        * v_temp
+                else:
+                    hv = hv * v_temp
+
                 print('hv', hv.norm(p=2))
                 print('Start AdaHess for hvp')
             else:

@@ -44,7 +44,7 @@ parser.add_argument('--eta', type=float, default=0.3,
                     help='learning rate for the inner subproblem (default: 0.3)')
 parser.add_argument('--sigma', type=float, default=10,
                     help='Hessian Lipschitz constant (default: 10)')
-parser.add_argument('--sample-size-hessian', type=int, default=100,
+parser.add_argument('--sample-size-hessian', type=int, default=10,
                     help='Hessian batch size')
 parser.add_argument('--sample-size-gradient', type=int, default=100,
                     help='gradient batch size')
@@ -153,8 +153,10 @@ def main():
             outputs = model(data)
 
             y_onehot.zero_()
-            y_onehot.scatter_(1, target.view(-1, 1), 1)
-            loss_fn(outputs, y_onehot).backward(create_graph=True)
+            if 'LIN_REG' in optimizer.defaults['problem']:
+                y_onehot.scatter_(1, target.view(-1, 1), 1)
+            loss_fn(outputs, y_onehot if 'LIN_REG' in optimizer.defaults['problem'] else target)\
+                .backward(create_graph=True)
             #loss_fn(outputs, target).backward(create_graph=True)
             #print('Memory used loss: ', psutil.virtual_memory().used >> 20)
             optimizer.defaults['train_data'] = data
