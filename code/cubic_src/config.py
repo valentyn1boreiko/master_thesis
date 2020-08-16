@@ -8,6 +8,7 @@ from torchvision.datasets import MNIST, CIFAR10
 import pytorch_optmizers
 import torch.nn.functional as F
 from torch import nn, optim
+import autograd_hacks
 import numpy as np
 from resnet_cifar import resnet20_cifar
 
@@ -16,16 +17,40 @@ torch.set_printoptions(precision=10)
 
 
 class Flatten(nn.Module):
+
+    def __init__(self):
+        super(Flatten, self).__init__()
+
     def forward(self, x):
-        return x.view(x.size(0), -1)
+        shape = torch.prod(torch.tensor(x.shape[1:])).item()
+        return x.view(-1, shape)
 
 
-def LinearRegression():
+def LinearRegression_():
     model_ = nn.Sequential(
         Flatten(),
-        nn.Linear(784, 10)
+        nn.Linear(784, 10, bias=True),
     )
     return model_
+
+
+#LinearRegression_ = nn.Sequential()
+#LinearRegression_.add_module('flat', Flatten())
+#LinearRegression_.add_module('weights', nn.Linear(784, 10, bias=True))
+
+
+class LinearRegression(torch.nn.Module):
+    def __init__(self):
+        super(LinearRegression, self).__init__()
+        self.out = nn.Sequential(
+            Flatten(),
+            nn.Linear(784, 10)
+        )
+
+    def forward(self, x):
+        out = self.out(x)
+        return out
+
 
 # Source - https://github.com/pytorch/examples/blob/master/mnist/main.py
 
@@ -160,7 +185,7 @@ def to_img(x):
 
 
 network_to_use = 'LIN_REG_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR, LIN_REG_MNIST
-activation = 'swish'  # swish, softplus, relu
+activation = 'softplus'  # swish, softplus, relu
 
 transforms_dict = {
         'CNN_MNIST': transforms.Compose([
@@ -173,7 +198,7 @@ transforms_dict = {
                        ]),
         'LIN_REG_MNIST': transforms.Compose([
                            transforms.ToTensor(),
-                           #transforms.Normalize((0.5,), (0.5,))
+                           transforms.Normalize((0.5,), (0.5,))
                        ]),
         'CONV_AE_MNIST': transforms.Compose([
                            transforms.ToTensor(),
@@ -235,6 +260,9 @@ start_model_path = None
 # "models/benchmarks_AE_MNIST_Adam_5.pt"
 
 model = models[network_to_use].to(dev)
+
+#autograd_hacks.add_hooks(model)
+
 torch.manual_seed(7)
 if start_model_path:
     model.load_state_dict(torch.load(start_model_path))

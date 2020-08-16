@@ -107,10 +107,24 @@ def update_params(dct, src):
     return dct
 
 
+def getBack(var_grad_fn):
+    print(var_grad_fn)
+    for n in var_grad_fn.next_functions:
+        if n[0]:
+            try:
+                tensor = getattr(n[0], 'variable')
+                print(n[0])
+                print('Tensor with grad found:', tensor)
+                print(' - gradient:', tensor.grad)
+                print()
+            except AttributeError as e:
+                getBack(n[0])
+
 def main():
     train_flag = True
     n_digits = 10
     y_onehot = torch.FloatTensor(int(optimizer.defaults['sample_size_gradient']), n_digits)
+    autograd_hacks.add_hooks(optimizer.model)
 
     for epoch in range(args.epochs):
         # Set modules in the the network to train mode
@@ -150,13 +164,56 @@ def main():
             #print('Train data size ', data.size())
             optimizer.zero_grad()
             #print('Memory used zero_grad: ', psutil.virtual_memory().used >> 20)
-            outputs = model(data)
+
+            outputs = optimizer.model(data)
 
             y_onehot.zero_()
             if 'LIN_REG' in optimizer.defaults['problem']:
                 y_onehot.scatter_(1, target.view(-1, 1), 1)
-            loss_fn(outputs, y_onehot if 'LIN_REG' in optimizer.defaults['problem'] else target)\
-                .backward(create_graph=True)
+
+            try:
+                autograd_hacks.clear_backprops(optimizer.model)
+            except:
+                pass
+            """
+            for param in optimizer.param_groups[0]['params']:
+                if (param.grad is None or \
+                    (param.grad.sum() == 0)) \
+                        and optimizer.defaults['problem'] == 'matrix_completion':
+                    continue
+                print(param.requires_grad)
+                print('nname', param.names)
+                print('each param', param.size(), param)
+                print('its mean', param.grad)
+
+            print(optimizer.model.training)
+            print(model.training)
+            names = [n for n, p in optimizer.model.named_parameters() if p.requires_grad]
+            print(names)
+            names = [n for n, p in model.named_parameters() if p.requires_grad]
+            print(names)
+            #exit(0)
+            """
+            loss = loss_fn(outputs, y_onehot if 'LIN_REG' in optimizer.defaults['problem'] else target)
+            #print(getBack(loss.grad_fn))
+            #grads = torch.autograd.grad(loss
+            #                            , inputs=data, retain_graph=True, create_graph=True)
+            #print(grads)
+            #exit(0)
+            loss.backward(create_graph=True)
+            autograd_hacks.compute_grad1(optimizer.model)
+            #print(getBack(loss.grad_fn))
+            """
+            for param in optimizer.param_groups[0]['params']:
+                if (param.grad is None or \
+                    (param.grad.sum() == 0)) \
+                        and optimizer.defaults['problem'] == 'matrix_completion':
+                    continue
+
+                print('each param', param.size(), param)
+                print('after its mean', param.grad)
+            exit(0)
+            """
             #loss_fn(outputs, target).backward(create_graph=True)
             #print('Memory used loss: ', psutil.virtual_memory().used >> 20)
             optimizer.defaults['train_data'] = data

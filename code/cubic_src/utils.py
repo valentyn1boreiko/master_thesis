@@ -11,6 +11,9 @@ from scipy.sparse.linalg import minres
 from torch.autograd import Variable
 from torch.optim.optimizer import Optimizer
 import matplotlib
+
+import autograd_hacks
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, datetime
@@ -125,6 +128,7 @@ class SRCutils(Optimizer):
         self.delta_m_norm = None
 
         self.first_hv = True
+        self.hv_temp = None
 
         # Momentum, experimental
         self.b_1 = 0.9
@@ -164,8 +168,8 @@ class SRCutils(Optimizer):
                              AccGD=opt.get('AccGD', False),
                              innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', False),
-                             n_iter=opt.get('n_iter', 4),
-                             block_size=opt.get('block_size', None),
+                             n_iter=opt.get('n_iter', 1),
+                             block_size=opt.get('block_size', 100),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
@@ -456,22 +460,37 @@ class SRCutils(Optimizer):
         H_bmm = lambda x: self.hessian_vector_product(x)
         return self.get_eigen(H_bmm, **kwargs)
 
-    def get_grads_and_params(self):
+    def get_grads_and_params(self, grad1=False):
         """ Get model parameters and corresponding gradients
         """
         params = []
         grads = []
         # We assume only one group for now
+        #print(self.param_groups)
         for param in self.param_groups[0]['params']:
             if (not (param.grad is None) and not (param.grad.sum() == 0)) \
                     or self.defaults['problem'] != 'matrix_completion':
                 params.append(param)
-            if param.grad is None or \
-                    (param.grad.sum() == 0
-                     and self.defaults['problem'] == 'matrix_completion'):
+            if (param.grad is None or \
+                    (param.grad.sum() == 0)) \
+                     and self.defaults['problem'] == 'matrix_completion':
                 continue
 
+            #print('each param', param.size(), param)
+            #print('each grad', param.grad1)
+            #print('its mean', param.grad, param.grad1.mean(dim=0))
+            assert (torch.allclose(param.grad1.mean(dim=0), param.grad, atol=1e-05))
+
+
             grads.append(param.grad + 0.)
+
+        #print(len(flatten_tensor_list(grads)),
+        #      flatten_tensor_list(grads))
+        #exit(0)
+
+        #if grad1:
+        #    return flatten_tensor_list(grads), params,
+        #else:
         return flatten_tensor_list(grads), params
 
     def update_params(self, delta, inplace=True):
@@ -704,6 +723,18 @@ class SRCutils(Optimizer):
                     #self.grad = self.grad.to(torch.float64)
                     print(exitCode, update.norm(p=2), update)
                     #exit(0)
+                elif self.defaults['subproblem_solver'] == 'AdaHess':
+                    ihvp = self.hessian_vector_product(-g_, inverse=True,
+                                                       shift=((self.defaults['sigma'] / 2) * delta.norm(p=2)).detach().numpy())
+                    delta_new = ihvp
+                    update = delta - delta_new
+                elif self.defaults['subproblem_solver'] == 'AdaHess_newton':
+                    update = self.hessian_vector_product(self.m_grad(g_, delta), inverse=True,
+                                                         shift=((self.defaults['sigma']) * delta.norm(p=2)).detach().numpy())
+                    self.computations_done += 1
+                    self.computations_done_times_samples += \
+                        self.defaults['sample_size_hessian']
+
                 update_norm = update.norm(p=2)
                 # ToDo - improve / remove empirical checks
                 if False and (not self.defaults['AdaHess']) and (update_norm >= 2.5 * self.mean_update) and self.mean_update != 0:
@@ -983,7 +1014,7 @@ class SRCutils(Optimizer):
             .detach().cpu().numpy()
         return output
 
-    def hessian_vector_product(self, v):
+    def hessian_vector_product(self, v, inverse=False, shift=None):
         """
         compute the hessian vector product of Hv, where
         gradsH is the gradient at the current point,
@@ -1010,7 +1041,7 @@ class SRCutils(Optimizer):
             data = data.to(self.defaults['dev'])
             target = target.to(self.defaults['dev'])
 
-        # if self.first_hv:
+        #if self.first_hv:
         self.zero_grad()
         x = self.param_groups[0]['params']
 
@@ -1018,15 +1049,22 @@ class SRCutils(Optimizer):
             data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
         elif self.is_classification or self.is_AE:  # and self.first_hv:
+
             outputs = self.model(data)
             self.y_onehot_hess.zero_()
             if 'LIN_REG' in self.defaults['problem']:
                 self.y_onehot_hess.scatter_(1, target.view(-1, 1), 1)
             #print(outputs, self.y_onehot)
+            try:
+                autograd_hacks.clear_backprops(self.model)
+            except:
+                pass
             self.loss_fn(outputs, self.y_onehot_hess if 'LIN_REG' in self.defaults['problem'] else target)\
                 .backward(create_graph=True)
+            autograd_hacks.compute_grad1(self.model)
+
             #self.loss_fn(outputs, target).backward(create_graph=True)
-            # self.first_hv = False
+            #self.first_hv = False
         elif self.is_w_function:  # and self.first_hv:
             self.model(x[0]).backward(create_graph=True)
             self.perturb()
@@ -1050,6 +1088,7 @@ class SRCutils(Optimizer):
                 v_temp = torch.cat((v, torch.zeros(len(gradsh) - len(v))))
 
             if self.defaults['AdaHess']:
+                #if self.first_hv:
                 self.t_hess += 1
                 b = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
                 rad = (2 * b.sample(self.grad.size()) - 1).squeeze()
@@ -1058,30 +1097,41 @@ class SRCutils(Optimizer):
                 print('D', self.t_hess, D.size(), D)
                 self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
                 hv = torch.sqrt((self.D / (1 - self.b_2 ** self.t)))
+                self.hv_temp = hv.detach()
+                #self.first_hv = False
+                #else:
+                #    pass
             else:
                 hv = torch.autograd.grad(gradsh, data_, grad_outputs=v_temp,
                                      only_inputs=True, retain_graph=True)
 
         else:
             if self.defaults['AdaHess']:
+
+                #if self.first_hv:
                 print('Start AdaHess for hvp')
                 self.t_hess += 1
                 # Temporal & spatial averaging
-                b = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
-                rad = (2 * b.sample(self.grad.size()) - 1).squeeze()
+                ber = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
+                rad = (2 * ber.sample(self.grad.size()) - 1).squeeze()
                 D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
                                      only_inputs=True, retain_graph=True)
                 D = (rad * flatten_tensor_list(D))
                 n_ = len(D)
 
-                # Before the code-block was here
                 print('D', D.norm(p=2))
                 self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
                 print('D', D.norm(p=2))
                 hv = torch.sqrt((self.D / (1 - self.b_2 ** self.t_hess)))
+                self.hv_temp = hv.detach()
+                #self.first_hv = False
+                hv = self.hv_temp
 
-                # Now the code-block is here (D -> hv)
+                if inverse:
+                    hv = (hv + shift) ** -1
+
                 b = self.defaults['block_size']
+
                 if b is not None:
                     hv = torch.cat((hv[:b * (n_ // b)].reshape(-1, b)
                                    .mean(1).repeat_interleave(b), hv[b * (n_ // b):])) \

@@ -166,6 +166,19 @@ def dataset(network_to_use_):
         return CIFAR10
 
 
+def getBack(var_grad_fn):
+    print(var_grad_fn)
+    for n in var_grad_fn.next_functions:
+        if n[0]:
+            try:
+                tensor = getattr(n[0], 'variable')
+                print(n[0])
+                print('Tensor with grad found:', tensor)
+                print(' - gradient:', tensor.grad)
+                print()
+            except AttributeError as e:
+                getBack(n[0])
+
 def weights_init(m):
     if isinstance(m, nn.Linear):
         #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
@@ -198,7 +211,21 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
 
         loss = criterion(output, y_onehot)
         #loss = criterion(output, target)
+        #for i, param in enumerate(optimizer.param_groups[0]['params']):
+        #    print(i)
+        #    print('each param', param.size(), param)
+        #    print('its mean', param.grad)
+
+        #print(getBack(loss.grad_fn))
         loss.backward()
+        #for param in optimizer.param_groups[0]['params']:
+        #    if (param.grad is None or \
+        #        (param.grad.sum() == 0)) \
+        #        and optimizer.defaults['problem'] == 'matrix_completion':
+        #        continue
+        #    print('each param', param.size(), param)
+        #    print('its mean', param.grad)
+        #exit(0)
         optimizer.step()
         if batch_idx * len(data) % args.log_interval == 0 and batch_idx != 0:
             print('batch idx', batch_idx)
@@ -406,7 +433,7 @@ def main():
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]),
         'LIN_REG_MNIST': transforms.Compose([
             transforms.ToTensor(),
-            # transforms.Normalize((0.5,), (0.5,))
+            transforms.Normalize((0.5,), (0.5,))
         ])
     }
 
