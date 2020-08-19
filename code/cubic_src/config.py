@@ -198,7 +198,7 @@ transforms_dict = {
                        ]),
         'LIN_REG_MNIST': transforms.Compose([
                            transforms.ToTensor(),
-                           transforms.Normalize((0.5,), (0.5,))
+                           #transforms.Normalize((0.5,), (0.5,))
                        ]),
         'CONV_AE_MNIST': transforms.Compose([
                            transforms.ToTensor(),
