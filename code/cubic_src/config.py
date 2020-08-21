@@ -184,7 +184,7 @@ def to_img(x):
     return x
 
 
-network_to_use = 'LIN_REG_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR, LIN_REG_MNIST
+network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR, LIN_REG_MNIST
 activation = 'softplus'  # swish, softplus, relu
 
 transforms_dict = {

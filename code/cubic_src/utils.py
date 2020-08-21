@@ -1,6 +1,7 @@
 import builtins
 import json
 import logging
+import math
 
 import torch
 import time
@@ -144,6 +145,10 @@ class SRCutils(Optimizer):
         self.D_hat = None
         self.epsilon = 1e-08
 
+        # WoodFisher
+        self.accumulated_inv = []
+        self.t_inv = 0
+
         self.defaults = dict(problem=opt.get('problem', 'CNN'),  #matrix_completion, CNN, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
                              activation=opt.get('activation', 'swish'),
@@ -163,13 +168,13 @@ class SRCutils(Optimizer):
                              log_interval=opt.get('log_interval', 600),
                              plot_interval=opt.get('plot_interval', 5),
                              AdaHess=opt.get('AdaHess', False),
-                             WoodFisher=opt.get('WoodFisher', True),
+                             WoodFisher=opt.get('WoodFisher', False),
                              delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
                              innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', False),
-                             n_iter=opt.get('n_iter', 4),
+                             n_iter=opt.get('n_iter', 1),
                              block_size=opt.get('block_size', None),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
@@ -477,20 +482,22 @@ class SRCutils(Optimizer):
                     (param.grad.sum() == 0)) \
                      and self.defaults['problem'] == 'matrix_completion':
                 continue
-
-            print('ssizes', grad1_grads.size(), param.grad1.size())
-            grad1_grads = torch.cat([grad1_grads,
+            if self.defaults['WoodFisher']:
+                print('ssizes', grad1_grads.size(), param.grad1.size())
+                grad1_grads = torch.cat([grad1_grads,
                                      param.grad1.view(self.defaults['sample_size_' + calculating], -1)],
                                     dim=1)
             #print('each param', param.size(), param)
             #print('each grad', param.grad1.size(), param.grad1)
             #print('its mean', param.grad, param.grad1.mean(dim=0))
             assert param.grad.sum() != 0
-            assert (torch.allclose(param.grad1.mean(dim=0), param.grad, atol=1e-05))
-
+            if self.defaults['WoodFisher']:
+                assert (torch.allclose(param.grad1.mean(dim=0), param.grad, atol=1e-05))
 
             grads.append(param.grad + 0.)
-        print('sssize', grad1_grads.size(), flatten_tensor_list(grads).size())
+
+        if self.defaults['WoodFisher']:
+            print('sssize', grad1_grads.size(), flatten_tensor_list(grads).size())
         #print(len(flatten_tensor_list(grads)),
         #      flatten_tensor_list(grads))
         #exit(0)
@@ -639,7 +646,9 @@ class SRCutils(Optimizer):
             if self.defaults['innerAdam']:
                 m = 0
                 v = 0
-
+            if T_eps == 0:
+                update = delta.detach()
+                update_norm = update.norm(p=2)
             for i in range(int(T_eps)):
                 print(i, '/', T_eps)
                 self.computations_done += 1
@@ -732,12 +741,12 @@ class SRCutils(Optimizer):
                     #exit(0)
                 elif self.defaults['subproblem_solver'] == 'AdaHess':
                     ihvp = self.hessian_vector_product(-g_, inverse=True,
-                                                       shift=((self.defaults['sigma'] / 2) * delta.norm(p=2)).detach().numpy())
+                                                       shift=((self.defaults['sigma'] / 2) * delta.norm(p=2)).detach())
                     delta_new = ihvp
                     update = delta - delta_new
                 elif self.defaults['subproblem_solver'] == 'AdaHess_newton':
                     update = self.hessian_vector_product(self.m_grad(g_, delta), inverse=True,
-                                                         shift=((self.defaults['sigma']) * delta.norm(p=2)).detach().numpy())
+                                                         shift=((self.defaults['sigma']) * delta.norm(p=2)).detach())
                     self.computations_done += 1
                     self.computations_done_times_samples += \
                         self.defaults['sample_size_hessian']
@@ -779,7 +788,8 @@ class SRCutils(Optimizer):
                 self.update_params(-delta)
 
             # Experimental!
-            self.defaults['sigma'] += self.grad_norms
+            #self.defaults['sigma'] += self.grad_norms
+
             print('sigma new', self.defaults['sigma'])
             # Adaptive rho as in "Sub-sampled Cubic Regularization for Non-convex Optimization"
             if self.defaults['adaptive_rho']:
@@ -1153,22 +1163,33 @@ class SRCutils(Optimizer):
                     hv = hv * v_temp
 
             elif self.defaults['WoodFisher'] and inverse:
-                n_ = len(gradsh)
                 print(grad_all.size())
-                const = torch.eye(n_) * (shift ** -1)
-                print(2)
-                inv = torch.inverse(torch.eye(self.defaults['sample_size_hessian'])
-                        + grad_all @ const @ grad_all.t())
-                hv = const - (const @ grad_all.t() @ inv @ grad_all @ const)
-                print(3)
-                hv = torch.diag(hv)
+                num_grad = grad_all.size()[0]
+                assert num_grad == self.defaults['sample_size_hessian']
+                n_ = len(gradsh)
+                num_splits = math.ceil(n_ / b)
+                #if len(self.accumulated_inv) == 0:
+                #    self.accumulated_inv = [0] * num_splits
+                hv = torch.zeros_like(v_temp)
+                #self.t_inv += 1
 
-                if b is not None:
-                    hv = torch.cat((hv[:b * (n_ // b)].reshape(-1, b)
-                                   .mean(1).repeat_interleave(b), hv[b * (n_ // b):])) \
-                        * v_temp
-                else:
-                    hv = hv * v_temp
+                for i in range(num_splits):
+                    start = i*b
+                    end = min((i+1)*b, n_)
+
+                    grad_all_sample = grad_all[:, start:end]
+
+                    const = torch.eye(end-start) * (shift ** -1)
+                    #if self.t_inv != 1:
+                    #    const += torch.diag(self.accumulated_inv[i])
+                    inv = torch.inverse(torch.eye(num_grad)
+                                        + grad_all_sample @ const @ grad_all_sample.t())
+
+                    inv = const - (const @ grad_all_sample.t() @ inv @ grad_all_sample @ const)
+                    #self.accumulated_inv[i] += \
+                    #    (self.b_2 * self.accumulated_inv[i] + (1 - self.b_2) * torch.diag(inv) ** 2).detach()
+                    hv[start:end] = inv @ v_temp[start:end]
+
 
                 print('hv', hv.norm(p=2))
                 print('Start AdaHess for hvp')
