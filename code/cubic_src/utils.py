@@ -606,7 +606,7 @@ class SRCutils(Optimizer):
             self.defaults['sample_size_hessian']
 
         print('delta_m ', self.m_delta(delta))
-        if (not self.defaults['delta_momentum']):  # and grad_norm < beta ** 2 / self.defaults['sigma']:
+        if True: #(not self.defaults['delta_momentum']):  # and grad_norm < beta ** 2 / self.defaults['sigma']:
             self.case_n = 2
             print('case 2')
             # Constants from the paper
@@ -1140,6 +1140,9 @@ class SRCutils(Optimizer):
                 D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
                                      only_inputs=True, retain_graph=True)
                 D = (rad * flatten_tensor_list(D))
+                ##num_grad = grad_all.size()[0]
+                #assert num_grad == self.defaults['sample_size_hessian']
+                #D = torch.sum(grad_all * grad_all, 0).true_divide(num_grad)
                 n_ = len(D)
 
                 print('D', D.norm(p=2))
@@ -1181,14 +1184,34 @@ class SRCutils(Optimizer):
 
                     const = torch.eye(end-start) * (shift ** -1)
                     #if self.t_inv != 1:
-                    #    const += torch.diag(self.accumulated_inv[i])
-                    inv = torch.inverse(torch.eye(num_grad)
+                    #    const += self.accumulated_inv[i]
+                    inv = torch.inverse(num_grad*torch.eye(num_grad)
                                         + grad_all_sample @ const @ grad_all_sample.t())
 
                     inv = const - (const @ grad_all_sample.t() @ inv @ grad_all_sample @ const)
                     #self.accumulated_inv[i] += \
-                    #    (self.b_2 * self.accumulated_inv[i] + (1 - self.b_2) * torch.diag(inv) ** 2).detach()
+                    #    (self.b_2 * self.accumulated_inv[i] + (1 - self.b_2) * inv).detach()
                     hv[start:end] = inv @ v_temp[start:end]
+
+            elif self.defaults['LBFGS'] and inverse:
+                # Under construction
+                # LBFGS two-loop recursion as in https://arxiv.org/pdf/1607.01231.pdf
+                # with regularization similar to
+                # http://www-optima.amp.i.kyoto-u.ac.jp/papers/master/2014_master_sugimoto.pdf
+
+                # v_temp corresponds to the gradient in this case
+                u = (v_temp + shift*self.params).detach()
+                for i in range(self.t_lbfgs):
+                    pass
+
+                # use inverse Hessian init
+                ivhp = u # gamma_k * u
+                for i in range(self.t_lbfgs):
+                    pass
+
+                self.t_lbfgs += 1
+
+                hv = ivhp.detach()
 
 
                 print('hv', hv.norm(p=2))
