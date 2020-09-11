@@ -185,7 +185,7 @@ class SRCutils(Optimizer):
                              innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', False),
                              n_iter=opt.get('n_iter', 1),
-                             block_size=opt.get('block_size', 5),
+                             block_size=opt.get('block_size', 50),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
@@ -309,6 +309,7 @@ class SRCutils(Optimizer):
             self.y_onehot_hess = torch.FloatTensor(
                 int(self.defaults['sample_size_hessian']), n_digits)
             self.f_name = self.mydir + '/loss_src' \
+                          + '_n_iter=' + str(self.defaults['n_iter']) \
                           + '_delta=' + str(self.defaults['delta_momentum']) \
                           + '_Hessian_approx=' + str(self.defaults['Hessian_approx']) \
                           + '_Solver=' + str(self.defaults['subproblem_solver']) \
@@ -1190,7 +1191,8 @@ class SRCutils(Optimizer):
                     if inverse:
                         hv = (hv + shift) ** -1
 
-                    if b is not None:
+                    # For now - switch off block averaging!
+                    if False and b is not None:
                         hv = torch.cat((hv[:b * (n_ // b)].reshape(-1, b)
                                        .mean(1).repeat_interleave(b), hv[b * (n_ // b):])) \
                             * v_temp

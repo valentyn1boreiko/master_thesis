@@ -185,7 +185,7 @@ def to_img(x):
     return x
 
 
-network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR, LIN_REG_MNIST
+network_to_use = 'LIN_REG_MNIST'  # AE_MNIST, CNN_MNIST, CONV_AE_MNIST, CNN_CIFAR, LIN_REG_MNIST
 activation = 'softplus'  # swish, softplus, relu
 
 transforms_dict = {
@@ -282,7 +282,7 @@ opt = dict(model=model,
            delta_momentum=True,
            delta_momentum_stepsize=0.01,
            initial_penalty_parameter=10,  # 15000, 10
-           verbose=False,
+           verbose=True,
            beta_lipschitz=1,
            eta=0.3,
            sample_size_hessian=100,
