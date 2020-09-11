@@ -2,7 +2,6 @@ import builtins
 import json
 import logging
 import math
-
 import torch
 import time
 import numpy as np
@@ -74,6 +73,8 @@ def unflatten_tensor_list(tensor, params):
 def tridiag(a, b, c, k1=-1, k2=0, k3=1):
     return torch.diag(a, k1) + torch.diag(b, k2) + torch.diag(c, k3)
 
+def rotate(l, n):
+    return l[n:] + l[:n]
 
 def sample_spherical(npoints, ndim=3):
     vec = torch.randn(ndim, npoints)
@@ -116,7 +117,16 @@ class SRCutils(Optimizer):
         self.loss_fn = opt['loss_fn']
         self.case_n = 1
         self.n = opt['n']
-        self.grad, self.params = None, None
+        self.grad, self.params, self.params_previous, \
+        self.grad_previous = None, None, None, None
+        self.lbfgs_step = 0
+
+        self.lbfgs_memory = 4
+        self.s_arr = self.y_stoch_arr = self.mu_arr = self.rho_arr \
+            = self.u_arr = self.nu_arr = [None]*self.lbfgs_memory
+
+        self.delta = 1e-1
+
         self.samples_seen = 0
         self.computations_done = 0
         self.computations_done_times_samples = 0
@@ -149,11 +159,12 @@ class SRCutils(Optimizer):
         self.accumulated_inv = []
         self.t_inv = 0
 
-        self.defaults = dict(problem=opt.get('problem', 'CNN'),  #matrix_completion, CNN, w-function, AE
+        self.defaults = dict(problem=opt.get('problem', 'CNN'),  # matrix_completion, CNN, w-function, AE
                              grad_tol=opt.get('grad_tol', 1e-2),
                              activation=opt.get('activation', 'swish'),
                              adaptive_rho=opt.get('adaptive_rho', False),
                              subproblem_solver=opt.get('subproblem_solver', 'adaptive'),
+                             # adaptive, non-adaptive, minres, Linear_system, Newton
                              batchsize_mode=batchsize_mode,
                              sample_size_hessian=opt.get('sample_size_hessian', 0.03 / 6),
                              sample_size_gradient=opt.get('sample_size_gradient', 0.03 / 6),
@@ -167,15 +178,14 @@ class SRCutils(Optimizer):
                              target=None,
                              log_interval=opt.get('log_interval', 600),
                              plot_interval=opt.get('plot_interval', 5),
-                             AdaHess=opt.get('AdaHess', False),
-                             WoodFisher=opt.get('WoodFisher', False),
+                             Hessian_approx=opt.get('Hessian_approx', 'AdaHess'),  # AdaHess, WoodFisher, LBFGS
                              delta_momentum=opt.get('delta_momentum', False),
                              delta_momentum_stepsize=opt.get('delta_momentum_stepsize', 0.05),  # 0.04
                              AccGD=opt.get('AccGD', False),
                              innerAdam=opt.get('innerAdam', False),
                              verbose=opt.get('verbose', False),
                              n_iter=opt.get('n_iter', 1),
-                             block_size=opt.get('block_size', None),
+                             block_size=opt.get('block_size', 5),
                              momentum_schedule_linear_const=opt.get('schedule_linear', 1.0),  # scale the momentum step-size
                              momentum_schedule_linear_period=opt.get('schedule_linear_period', 10)
                              )
@@ -189,7 +199,8 @@ class SRCutils(Optimizer):
         self.is_AE = 'AE' in self.defaults['problem']
         self.mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         try:
-            os.mkdir(self.mydir)
+            if self.defaults['problem'] != 'w-function':
+                os.mkdir(self.mydir)
         except Exception as e:
             print(str(e))
 
@@ -291,6 +302,7 @@ class SRCutils(Optimizer):
 
     def print_acc(self, batch_size, epoch, batch_idx):
         if self.first_entry:
+
             n_digits = 10
             self.y_onehot = torch.FloatTensor(
                 int(self.defaults['sample_size_gradient']), n_digits)
@@ -298,7 +310,8 @@ class SRCutils(Optimizer):
                 int(self.defaults['sample_size_hessian']), n_digits)
             self.f_name = self.mydir + '/loss_src' \
                           + '_delta=' + str(self.defaults['delta_momentum']) \
-                          + '_AdaHess=' + str(self.defaults['AdaHess']) \
+                          + '_Hessian_approx=' + str(self.defaults['Hessian_approx']) \
+                          + '_Solver=' + str(self.defaults['subproblem_solver']) \
                           + '_sigma=' + str(self.defaults['sigma']) \
                           + '_delta_step=' + str(self.defaults['delta_momentum_stepsize']) \
                           + '_eta=' + str(self.defaults['eta']) \
@@ -382,7 +395,9 @@ class SRCutils(Optimizer):
         # ToDo: replace hessian-vec product with the upper bound (beta)
         grads_norm = self.grad.norm(p=2)
         print('Cauchy point', grads_norm)
-        product = torch.dot(self.hessian_vector_product(self.grad), self.grad) / (self.defaults['sigma'] * grads_norm ** 2)  # @
+        product = torch.dot(self.hessian_vector_product(self.grad,
+                                                        for_eigenvalues=self.defaults['Hessian_approx'] != 'AdaHess'),
+                            self.grad) / (self.defaults['sigma'] * grads_norm ** 2)  # @
         print('product', product, product.size())
         if product <= 0:
             print('Negative product!', product)
@@ -463,7 +478,7 @@ class SRCutils(Optimizer):
             return max(abs(eigs)) if which == 'biggest' else min(eigs)
 
     def get_hessian_eigen(self, **kwargs):
-        H_bmm = lambda x: self.hessian_vector_product(x)
+        H_bmm = lambda x: self.hessian_vector_product(x, for_eigenvalues=True)
         return self.get_eigen(H_bmm, **kwargs)
 
     def get_grads_and_params(self, grad1=False, calculating='gradient'):
@@ -482,7 +497,7 @@ class SRCutils(Optimizer):
                     (param.grad.sum() == 0)) \
                      and self.defaults['problem'] == 'matrix_completion':
                 continue
-            if self.defaults['WoodFisher']:
+            if self.defaults['Hessian_approx'] == 'WoodFisher':
                 print('ssizes', grad1_grads.size(), param.grad1.size())
                 grad1_grads = torch.cat([grad1_grads,
                                      param.grad1.view(self.defaults['sample_size_' + calculating], -1)],
@@ -490,13 +505,13 @@ class SRCutils(Optimizer):
             #print('each param', param.size(), param)
             #print('each grad', param.grad1.size(), param.grad1)
             #print('its mean', param.grad, param.grad1.mean(dim=0))
-            assert param.grad.sum() != 0
-            if self.defaults['WoodFisher']:
+                assert param.grad.sum() != 0
+            if self.defaults['Hessian_approx'] == 'WoodFisher':
                 assert (torch.allclose(param.grad1.mean(dim=0), param.grad, atol=1e-05))
 
             grads.append(param.grad + 0.)
 
-        if self.defaults['WoodFisher']:
+        if self.defaults['Hessian_approx'] == 'WoodFisher':
             print('sssize', grad1_grads.size(), flatten_tensor_list(grads).size())
         #print(len(flatten_tensor_list(grads)),
         #      flatten_tensor_list(grads))
@@ -546,12 +561,12 @@ class SRCutils(Optimizer):
 
     def m_grad(self, g_, delta_):
         return (g_ + \
-               self.hessian_vector_product(delta_) + \
+               self.hessian_vector_product(delta_, for_eigenvalues=self.defaults['Hessian_approx'] != 'AdaHess') + \
                (self.defaults['sigma'] / 2) * delta_.norm(p=2) * delta_).detach()
 
     def m_delta(self, delta):
         grad_term = torch.dot(self.grad, delta)  # @
-        hess_term = 0.5 * torch.dot(self.hessian_vector_product(delta), delta)  # @
+        hess_term = 0.5 * torch.dot(self.hessian_vector_product(delta, for_eigenvalues=True), delta)  # @
         reg_term = self.defaults['sigma'] / 6 * delta.norm(p=2) ** 3
         return (grad_term + \
                 hess_term + \
@@ -564,6 +579,8 @@ class SRCutils(Optimizer):
 
     def cubic_subsolver(self):
 
+        self.params_previous = self.params if hasattr(self, 'params') and self.params else 0
+        self.grad_previous = self.grad if hasattr(self, 'grad') and self.grad else 0
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim, norm = ', self.grad.size(), self.grad.norm(p=2), len(self.params))
         beta = self.defaults.get('beta_lipschitz') if self.defaults.get('beta_lipschitz') is not None\
@@ -571,7 +588,7 @@ class SRCutils(Optimizer):
         self.least_eig = self.get_hessian_eigen(which='least', maxIter=5)
         print('least_eig', self.least_eig)
 
-        if self.defaults['AdaHess']:
+        if self.defaults['Hessian_approx'] == 'AdaHess':
             self.t_grad += 1
 
             print("AdaHess grad before", self.t_grad, self.grad.norm(p=2))
@@ -623,7 +640,8 @@ class SRCutils(Optimizer):
             print('generating sphere random sample, dim = ', self.grad.size()[0])
             unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
             # ToDo: should I use the perturbation ball?
-            ##g_ = self.m_grad(self.grad, delta) #+ 2*unif_sphere
+            #g_ = self.m_grad(self.grad, delta) + unif_sphere
+
             g_ = (self.grad + unif_sphere).detach()
 
 
@@ -723,13 +741,10 @@ class SRCutils(Optimizer):
                     #    print(abs(self.m_delta(delta)))
 
                 elif self.defaults['subproblem_solver'] == 'non-adaptive':
-                    hvp = self.hessian_vector_product(delta)
-                    print('Non-adaptive', g_.norm(p=2), hvp.norm(p=2), delta.norm(p=2))
-                    update = eta * (
-                            g_ +
-                            hvp +
-                            (self.defaults['sigma'] / 2) * delta.norm(p=2) * delta
-                    ).detach()
+                    #hvp = self.hessian_vector_product(delta)
+                    print('non-adaptive', g_.norm(p=2)) #, hvp.norm(p=2), delta.norm(p=2))
+                    update = eta * self.m_grad(g_, delta)
+
                 elif self.defaults['subproblem_solver'] == 'minres':
                     n = delta.size()[0]
                     hvp = LinearOperator((n, n), matvec=self.numpy_hessian_vector_product)
@@ -739,14 +754,16 @@ class SRCutils(Optimizer):
                     #self.grad = self.grad.to(torch.float64)
                     print(exitCode, update.norm(p=2), update)
                     #exit(0)
-                elif self.defaults['subproblem_solver'] == 'AdaHess':
+                elif self.defaults['subproblem_solver'] == 'Linear_system':
+                    shift_ = ((self.defaults['sigma'] / 2) * delta.norm(p=2)).detach()
                     ihvp = self.hessian_vector_product(-g_, inverse=True,
-                                                       shift=((self.defaults['sigma'] / 2) * delta.norm(p=2)).detach())
+                                                       shift=shift_)
                     delta_new = ihvp
                     update = delta - delta_new
-                elif self.defaults['subproblem_solver'] == 'AdaHess_newton':
+                elif self.defaults['subproblem_solver'] == 'Newton':
+                    shift_ = ((self.defaults['sigma']) * delta.norm(p=2)).detach()
                     update = self.hessian_vector_product(self.m_grad(g_, delta), inverse=True,
-                                                         shift=((self.defaults['sigma']) * delta.norm(p=2)).detach())
+                                                         shift=shift_)
                     self.computations_done += 1
                     self.computations_done_times_samples += \
                         self.defaults['sample_size_hessian']
@@ -766,30 +783,41 @@ class SRCutils(Optimizer):
                     self.running_update = 0
                     break
 
-                self.y_onehot.zero_()
+                if 'LIN_REG' in self.defaults['problem']:
+                    self.y_onehot.zero_()
                 if 'LIN_REG' in self.defaults['problem']:
                     self.y_onehot.scatter_(1, self.defaults['target'].view(-1, 1), 1)
 
-                previous_f = self.loss_fn(
-                    self.model(
-                        self.defaults['train_data']
-                    ),
-                    self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
-                self.update_params(delta)
-                current_f = self.loss_fn(
-                    self.model(
-                        self.defaults['train_data']
-                    ),
-                    self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
+                if not self.defaults['problem'] == 'w-function':
+                    previous_f = self.loss_fn(
+                        self.model(
+                            self.defaults['train_data']
+                        ),
+                        self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
+                    self.update_params(delta)
+                    current_f = self.loss_fn(
+                        self.model(
+                            self.defaults['train_data']
+                        ),
+                        self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
 
 
-                print('delta_m = ', self.m_delta(delta), delta.norm(p=2), (delta - delta_old).norm(p=2),
-                      update.norm(p=2), self.mean_update, previous_f-current_f)
-                self.update_params(-delta)
+                    print('delta_m = ', self.m_delta(delta), delta.norm(p=2), (delta - delta_old).norm(p=2),
+                          update.norm(p=2), self.mean_update, previous_f-current_f)
+                    self.update_params(-delta)
 
             # Experimental!
             #self.defaults['sigma'] += self.grad_norms
 
+            if self.is_w_function:
+                x = self.param_groups[0]['params']
+                previous_f = self.model(x[0]).detach()
+                self.update_params(delta)
+                x = self.param_groups[0]['params']
+                current_f = self.model(x[0]).detach()
+                self.update_params(-delta)
+                if current_f > 1.05 ** np.sign(previous_f) * previous_f:
+                    delta = torch.zeros(self.grad.size())
             print('sigma new', self.defaults['sigma'])
             # Adaptive rho as in "Sub-sampled Cubic Regularization for Non-convex Optimization"
             if self.defaults['adaptive_rho']:
@@ -842,7 +870,7 @@ class SRCutils(Optimizer):
                 self.running_update = 0
                     #self.computations_done[-1] += self.get_num_points('hessian')
                 #self.computations_done[-1] += self.get_num_points()
-            if (update_norm >= 1e3 * self.mean_update):
+            if self.defaults['n_iter'] > 0 and  (update_norm >= 1e3 * self.mean_update):
                 print('cauchy point has been increasing too much!', self.mean_update, update_norm)
                 delta = torch.zeros(self.grad.size())
 
@@ -1034,7 +1062,8 @@ class SRCutils(Optimizer):
             .detach().cpu().numpy()
         return output
 
-    def hessian_vector_product(self, v, inverse=False, shift=None):
+    def hessian_vector_product(self, v, inverse=False, shift=None,
+                               for_eigenvalues=False):
         """
         compute the hessian vector product of Hv, where
         gradsH is the gradient at the current point,
@@ -1061,8 +1090,8 @@ class SRCutils(Optimizer):
             data = data.to(self.defaults['dev'])
             target = target.to(self.defaults['dev'])
 
-        #if self.first_hv:
-        self.zero_grad()
+        if self.first_hv:
+            self.zero_grad()
         x = self.param_groups[0]['params']
 
         if self.is_matrix_completion:
@@ -1085,12 +1114,12 @@ class SRCutils(Optimizer):
 
             #self.loss_fn(outputs, target).backward(create_graph=True)
             #self.first_hv = False
-        elif self.is_w_function:  # and self.first_hv:
+        elif self.is_w_function and self.first_hv:
             self.model(x[0]).backward(create_graph=True)
             self.perturb()
-            # self.first_hv = False
+            self.first_hv = False
 
-        if self.defaults['WoodFisher']:
+        if self.defaults['Hessian_approx'] == 'WoodFisher':
             gradsh, params, grad_all = self.get_grads_and_params(grad1=True,
                                                                  calculating='hessian')
         else:
@@ -1129,99 +1158,147 @@ class SRCutils(Optimizer):
         else:
             b = self.defaults['block_size']
 
-            if self.defaults['AdaHess']:
-
-                #if self.first_hv:
-                print('Start AdaHess for hvp')
-                self.t_hess += 1
-                # Temporal & spatial averaging
-                ber = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
-                rad = (2 * ber.sample(self.grad.size()) - 1).squeeze()
-                D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
-                                     only_inputs=True, retain_graph=True)
-                D = (rad * flatten_tensor_list(D))
-                ##num_grad = grad_all.size()[0]
-                #assert num_grad == self.defaults['sample_size_hessian']
-                #D = torch.sum(grad_all * grad_all, 0).true_divide(num_grad)
-                n_ = len(D)
-
-                print('D', D.norm(p=2))
-                self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
-                print('D', D.norm(p=2))
-                hv = torch.sqrt((self.D / (1 - self.b_2 ** self.t_hess)))
-                self.hv_temp = hv.detach()
-                #self.first_hv = False
-                hv = self.hv_temp
-
-                if inverse:
-                    hv = (hv + shift) ** -1
-
-                
-
-                if b is not None:
-                    hv = torch.cat((hv[:b * (n_ // b)].reshape(-1, b)
-                                   .mean(1).repeat_interleave(b), hv[b * (n_ // b):])) \
-                        * v_temp
-                else:
-                    hv = hv * v_temp
-
-            elif self.defaults['WoodFisher'] and inverse:
-                print(grad_all.size())
-                num_grad = grad_all.size()[0]
-                assert num_grad == self.defaults['sample_size_hessian']
-                n_ = len(gradsh)
-                num_splits = math.ceil(n_ / b)
-                #if len(self.accumulated_inv) == 0:
-                #    self.accumulated_inv = [0] * num_splits
-                hv = torch.zeros_like(v_temp)
-                #self.t_inv += 1
-
-                for i in range(num_splits):
-                    start = i*b
-                    end = min((i+1)*b, n_)
-
-                    grad_all_sample = grad_all[:, start:end]
-
-                    const = torch.eye(end-start) * (shift ** -1)
-                    #if self.t_inv != 1:
-                    #    const += self.accumulated_inv[i]
-                    inv = torch.inverse(num_grad*torch.eye(num_grad)
-                                        + grad_all_sample @ const @ grad_all_sample.t())
-
-                    inv = const - (const @ grad_all_sample.t() @ inv @ grad_all_sample @ const)
-                    #self.accumulated_inv[i] += \
-                    #    (self.b_2 * self.accumulated_inv[i] + (1 - self.b_2) * inv).detach()
-                    hv[start:end] = inv @ v_temp[start:end]
-
-            elif self.defaults['LBFGS'] and inverse:
-                # Under construction
-                # LBFGS two-loop recursion as in https://arxiv.org/pdf/1607.01231.pdf
-                # with regularization similar to
-                # http://www-optima.amp.i.kyoto-u.ac.jp/papers/master/2014_master_sugimoto.pdf
-
-                # v_temp corresponds to the gradient in this case
-                u = (v_temp + shift*self.params).detach()
-                for i in range(self.t_lbfgs):
-                    pass
-
-                # use inverse Hessian init
-                ivhp = u # gamma_k * u
-                for i in range(self.t_lbfgs):
-                    pass
-
-                self.t_lbfgs += 1
-
-                hv = ivhp.detach()
-
-
-                print('hv', hv.norm(p=2))
-                print('Start AdaHess for hvp')
-            else:
-                print('hvp')
+            if for_eigenvalues:
+                print('hvp - for eigenvalues')
                 hv = torch.autograd.grad(gradsh, params, grad_outputs=v_temp,
-                                     only_inputs=True, retain_graph=True)
+                                         only_inputs=True, retain_graph=True)
+            else:
+                if self.defaults['Hessian_approx'] == 'AdaHess':
+
+                    #if self.first_hv:
+                    print('Start AdaHess for hvp')
+                    self.t_hess += 1
+                    # Temporal & spatial averaging
+                    ber = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
+                    rad = (2 * ber.sample(self.grad.size()) - 1).squeeze()
+                    D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
+                                         only_inputs=True, retain_graph=True)
+                    D = (rad * flatten_tensor_list(D))
+                    ##num_grad = grad_all.size()[0]
+                    #assert num_grad == self.defaults['sample_size_hessian']
+                    #D = torch.sum(grad_all * grad_all, 0).true_divide(num_grad)
+                    n_ = len(D)
+
+                    print('D', D.norm(p=2))
+                    self.D = (self.b_2 * self.D + (1 - self.b_2) * D ** 2).detach()
+                    print('D', D.norm(p=2))
+                    hv = torch.sqrt((self.D / (1 - self.b_2 ** self.t_hess)))
+                    self.hv_temp = hv.detach()
+                    #self.first_hv = False
+                    hv = self.hv_temp
+
+                    if inverse:
+                        hv = (hv + shift) ** -1
+
+                    if b is not None:
+                        hv = torch.cat((hv[:b * (n_ // b)].reshape(-1, b)
+                                       .mean(1).repeat_interleave(b), hv[b * (n_ // b):])) \
+                            * v_temp
+                    else:
+                        hv = hv * v_temp
+
+                elif self.defaults['Hessian_approx'] == 'WoodFisher' and inverse:
+                    print(grad_all.size())
+                    num_grad = grad_all.size()[0]
+                    assert num_grad == self.defaults['sample_size_hessian']
+                    n_ = len(gradsh)
+                    num_splits = math.ceil(n_ / b)
+                    #if len(self.accumulated_inv) == 0:
+                    #    self.accumulated_inv = [0] * num_splits
+                    hv = torch.zeros_like(v_temp)
+                    #self.t_inv += 1
+
+                    for i in range(num_splits):
+                        start = i*b
+                        end = min((i+1)*b, n_)
+
+                        grad_all_sample = grad_all[:, start:end]
+
+                        const = torch.eye(end-start) * (shift ** -1)
+                        #if self.t_inv != 1:
+                        #    const += self.accumulated_inv[i]
+                        inv = torch.inverse(num_grad*torch.eye(num_grad)
+                                            + grad_all_sample @ const @ grad_all_sample.t())
+
+                        inv = const - (const @ grad_all_sample.t() @ inv @ grad_all_sample @ const)
+                        #self.accumulated_inv[i] += \
+                        #    (self.b_2 * self.accumulated_inv[i] + (1 - self.b_2) * inv).detach()
+                        hv[start:end] = inv @ v_temp[start:end]
+
+                elif self.defaults['Hessian_approx'] == 'LBFGS' and inverse:
+                    # Under construction
+                    # LBFGS two-loop recursion as in https://arxiv.org/pdf/1607.01231.pdf
+                    # with regularization similar to
+                    # http://www-optima.amp.i.kyoto-u.ac.jp/papers/master/2014_master_sugimoto.pdf
+
+                    # v_temp corresponds to the gradient in this case
+                    # shift should be sigma/2 * norm(delta)
+                    self.lbfgs_step += 1
+                    u = v_temp.detach()
+                    s_previous = flatten_tensor_list(self.params) \
+                        - (flatten_tensor_list(self.params_previous) if self.params_previous != 0 else 0)
+                    y_previous = ((self.grad + shift * flatten_tensor_list(self.params))
+                                  - ((self.grad_previous + shift * flatten_tensor_list(self.params_previous))
+                                     if self.params_previous !=0 else 0)).detach()
+                    assert len(s_previous) == len(y_previous)
+
+                    gamma = torch.max((y_previous @ y_previous)
+                                      / (s_previous @ y_previous), torch.tensor(self.delta))
+                    H_start = torch.ones_like(s_previous) * (gamma ** -1)
+                    H_start_inv = H_start ** -1
+                    val_1 = (H_start_inv) * s_previous @ s_previous
+                    val_2 = s_previous @ y_previous
+                    theta_previous = torch.tensor(0.75 * val_1 / (val_1 - val_2) \
+                        if val_2 < 0.25 * val_2 else 1)
+
+                    assert len(theta_previous.size()) == len(gamma.size()) == 0
+
+                    y_previous_stochastic = theta_previous * y_previous \
+                                            + (1 - theta_previous) * H_start_inv * s_previous
+                    rho_previous = (s_previous @ y_previous_stochastic) ** -1
+
+
+                    self.s_arr = rotate(self.s_arr, 1)
+                    self.s_arr[-1] = s_previous
+                    self.y_stoch_arr = rotate(self.y_stoch_arr, 1)
+                    self.y_stoch_arr[-1] = y_previous_stochastic
+                    self.rho_arr = rotate(self.rho_arr, 1)
+                    self.rho_arr[-1] = rho_previous
+
+                    # Two-loop recursion
+                    range_ = range(min(self.lbfgs_step, self.lbfgs_memory))
+                    for i in range_:
+                        self.mu_arr[i] = self.rho_arr[-(1+i)] * u @ self.s_arr[-(1+i)]
+                        u = u - self.mu_arr[i] * self.y_stoch_arr[-1]
+
+                    v = H_start * u
+
+                    start = max(self.lbfgs_memory - self.lbfgs_step, 0)
+                    for i in range_:
+                        ix = start + i
+                        print(i, ix)
+
+                        nu = self.rho_arr[ix] * v @ self.y_stoch_arr[ix]
+                        v = v + (self.mu_arr[-ix-1] - nu) * self.s_arr[ix]
+
+                    hv = v.detach()
+
+
+                    print('hv', hv.norm(p=2))
+                    print('Start AdaHess for hvp')
+                else:
+                    print('hvp')
+                    hv = torch.autograd.grad(gradsh, params, grad_outputs=v_temp,
+                                         only_inputs=True, retain_graph=True)
+
         if self.is_w_function:
-            hv = self.perturb(type_='hessian', hv=hv[0])
+            #hv = hv[0]
+            try:
+                hv = self.perturb(type_='hessian', hv=hv[0])
+            except:
+                hv = self.perturb(type_='hessian', hv=hv)
+            #print(hv)
+            #exit(0)
 
         #print(torch.cat(hv).unique(dim=0).shape)
         if self.is_matrix_completion:
@@ -1247,6 +1324,6 @@ class SRCutils(Optimizer):
         #print(hv[0].shape, hv)
         #print(hv.shape)
         print('hess vec product time: ', time.time() - end3)
-        return hv if self.defaults['AdaHess'] else flatten_tensor_list(hv)
+        return hv if self.defaults['Hessian_approx'] and not for_eigenvalues else flatten_tensor_list(hv)
 
 

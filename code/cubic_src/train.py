@@ -32,8 +32,11 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-parser.add_argument('--subproblem-solver', type=str, default='adaptive',  # adaptive, non-adaptive
+parser.add_argument('--subproblem-solver', type=str, default='adaptive',
+                    # adaptive, non-adaptive, minres, Linear_system, Newton
                     help='subproblem solver type (default: adaptive)')
+parser.add_argument('--Hessian-approx', type=str, default='AdaHess',  # AdaHess, WoodFisher, LBFGS
+                    help='Hessian approximation type (default: AdaHess)')
 parser.add_argument('--delta-momentum', type=str2bool, default=True,
                     help='if to use momentum for SRC (default: True)')
 parser.add_argument('--AdaHess', type=str2bool, default=True,
@@ -50,6 +53,8 @@ parser.add_argument('--sample-size-gradient', type=int, default=100,
                     help='gradient batch size')
 parser.add_argument('--epochs', type=int, default=14, metavar='N',
                     help='number of epochs to train (default: 14)')
+parser.add_argument('--n-iter', type=int, default=4, metavar='N',
+                    help='number of iterations of the subsolver (default: 4)')
 
 args = parser.parse_args()
 
@@ -120,6 +125,14 @@ def getBack(var_grad_fn):
             except AttributeError as e:
                 getBack(n[0])
 
+
+def flatten_tensor_list(tensors):
+    flattened = []
+    for tensor in tensors:
+        # Changed view to reshape
+        flattened.append(tensor.reshape(-1))
+    return torch.cat(flattened, 0)
+
 def main():
     train_flag = True
     n_digits = 10
@@ -155,11 +168,13 @@ def main():
             if network_to_use == 'AE_MNIST':
                 data = Variable(data.view(data.size(0), -1))
                 target = data
-            optimizer.print_acc(len(data), epoch, batch_idx)
             if train_flag:
                 model.train()
                 optimizer.model.train()
                 train_flag = False
+
+            optimizer.print_acc(len(data), epoch, batch_idx)
+
             #print('Memory used print_acc: ', psutil.virtual_memory().used >> 20)
             #print('Train data size ', data.size())
             optimizer.zero_grad()
@@ -172,7 +187,8 @@ def main():
                 y_onehot.scatter_(1, target.view(-1, 1), 1)
 
             try:
-                autograd_hacks.clear_backprops(optimizer.model)
+                if optimizer.defaults['Hessian_approx'] == 'WoodFisher':
+                    autograd_hacks.clear_backprops(optimizer.model)
             except:
                 pass
             """
@@ -201,7 +217,9 @@ def main():
             #print(grads)
             #exit(0)
             loss.backward(create_graph=True)
-            autograd_hacks.compute_grad1(optimizer.model)
+
+            if optimizer.defaults['Hessian_approx'] == 'WoodFisher':
+                autograd_hacks.compute_grad1(optimizer.model)
             #print(getBack(loss.grad_fn))
             """
             for param in optimizer.param_groups[0]['params']:

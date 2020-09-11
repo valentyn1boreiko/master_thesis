@@ -4,8 +4,9 @@ from torch import optim
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 
-
+torch.manual_seed(7)
 def model(xy):
     eps = 0.01
     L = 5
@@ -39,6 +40,23 @@ def convex_func(xy):
     return x**2 + y**2
 
 
+def update_params(dct, src):
+    for key, value in vars(src).items():
+        dct[key] = value
+    return dct
+
+
+parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+
+parser.add_argument('--eta', type=float, default=0.06,
+                    help='learning rate for the inner subproblem (default: 0.3)')
+parser.add_argument('--sample-size-hessian', type=int, default=300,
+                    help='Hessian batch size')
+parser.add_argument('--sample-size-gradient', type=int, default=300,
+                    help='gradient batch size')
+
+args = parser.parse_args()
+
 opt = dict(model=model,
            loss_fn=model,
            n=1000,
@@ -47,17 +65,21 @@ opt = dict(model=model,
            sample_size_hessian=300,  # 0.3
            sample_size_gradient=300,  # 0.3
            subproblem_solver='non-adaptive',
-           eta=0.3,
-           n_iter=5,
-           initial_penalty_parameter=2,  # 150, 1500
+           Hessian_approx='None',
+           eta=0.01,  # 0.05
+           n_iter=10,
+           initial_penalty_parameter=1,  # 150, 1500
            beta_lipschitz=1,
            delta_momentum=False,
-           delta_momentum_stepsize=.9)  # 0.9
+           delta_momentum_stepsize=.9,
+           verbose=True)  # 0.9
+
+opt = update_params(opt, args)
 
 problem_type = 'non-convex'  # convex, non-convex
-max_iter = int(4e2)
-step_size = 0.04  # 0.04, 0.001
-momentum = 0.9  # 0.7
+max_iter = int(8e2)
+step_size = opt['eta']  # 0.04, 0.001
+momentum = 0.0  # 0.7
 
 optimizer_type = 'SRC'  # SRC, SGD, Adam
 to_plot = 'loss'  # grad_norm, loss
@@ -72,7 +94,7 @@ grad_norms_src = []
 least_eig_src = []
 
 if optimizer_type == 'SGD':
-    f_name = 'fig/w-function/computations_momentum_' + to_plot \
+    f_name = 'fig/w-function-2-sgd/computations_momentum_' + to_plot \
          + '_' + optimizer_type\
          + '_' + problem_type\
          + '_' + str(int(opt['sample_size_gradient']))\
@@ -82,7 +104,7 @@ if optimizer_type == 'SGD':
          + '_' + str(averaging_ops)
 
 elif optimizer_type == 'SRC':
-    f_name = 'fig/w-function/computations_' + to_plot \
+    f_name = 'fig/w-function-2-sgd/computations_' + to_plot \
              + '_' + optimizer_type \
              + '_' + problem_type \
              + '_' + str(int(opt['sample_size_gradient'])) \
@@ -97,7 +119,7 @@ elif optimizer_type == 'SRC':
              + '_' + str(averaging_ops)
 
 elif optimizer_type == 'Adam':
-    f_name = 'fig/w-function/computations' \
+    f_name = 'fig/w-function-2-sgd/computations' \
              + '_' + to_plot \
              + '_' + optimizer_type \
              + '_' + problem_type \
@@ -107,9 +129,10 @@ elif optimizer_type == 'Adam':
              + '_' + str(averaging_ops)
 
 for op_num in range(averaging_ops):
-    X = torch.tensor([10.0, 10.0], requires_grad=True)
+    X = torch.tensor([0.0, 0.0], requires_grad=True)
     if optimizer_type == 'SRC':
         optimizer = SRC([X], opt=opt)
+        print(optimizer.defaults)
     elif optimizer_type == 'SGD':
         optimizer = optim.SGD([X], lr=step_size, momentum=momentum)
     elif optimizer_type == 'Adam':
@@ -126,7 +149,6 @@ for op_num in range(averaging_ops):
                     losses[i] = (losses[i] * op_num + loss_.item()) / (op_num + 1)
 
         if op_num == 0 and i > 0:
-            # Nr of gradient samples
             samples_seen.append(samples_seen[-1]
                             + int(opt['sample_size_gradient'])
                             + int((opt['sample_size_hessian'])
@@ -163,7 +185,7 @@ for op_num in range(averaging_ops):
         optimizer.step()
         print('loss = ', loss_.item())
         if optimizer_type == 'SRC':
-            computations_done_src.append(optimizer.computations_done)
+            computations_done_src.append(optimizer.computations_done_times_samples)
             grad_norms_src.append(optimizer.grad_norms)
             least_eig_src.append(optimizer.least_eig)
             print(losses, computations_done_src)
@@ -173,8 +195,7 @@ for op_num in range(averaging_ops):
 
 print(samples_seen)
 print(losses)
-pd.DataFrame({'samples': samples_seen,
-              'computations': list(np.array(samples_seen) / int(opt['sample_size_gradient']))
+pd.DataFrame({'computations_done_times_samples': samples_seen
               if optimizer_type in ['Adam', 'SGD'] else computations_done_src[:-1],
               'losses'
               if to_plot == 'loss' else 'grad_norm':
@@ -186,10 +207,10 @@ pd.DataFrame({'samples': samples_seen,
                index=None)
 
 if optimizer_type in ['Adam', 'SGD']:
-    plt.plot(list(np.array(samples_seen) / int(opt['sample_size_gradient'])),
+    plt.plot(samples_seen,
              losses if to_plot == 'loss' else grad_norms, label='loss')
 elif optimizer_type == 'SRC':
-    plt.plot(computations_done_src[120:-1], losses[120:] if to_plot == 'loss' else grad_norms, label='loss')
+    plt.plot(computations_done_src[:-1], losses[:] if to_plot == 'loss' else grad_norms, label='loss')
 plt.legend()
 plt.savefig(f_name + '.png')
 plt.clf()

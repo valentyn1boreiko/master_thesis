@@ -168,6 +168,7 @@ class AE_MNIST(nn.Module):
         x = self.decoder(x)
         return x
 
+
 # Uniform Glorot initializer
 def weights_init(m):
     if isinstance(m, nn.Linear):
@@ -281,7 +282,7 @@ opt = dict(model=model,
            delta_momentum=True,
            delta_momentum_stepsize=0.01,
            initial_penalty_parameter=10,  # 15000, 10
-           verbose=True,
+           verbose=False,
            beta_lipschitz=1,
            eta=0.3,
            sample_size_hessian=100,

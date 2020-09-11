@@ -3,13 +3,31 @@
 # CNN_CIFAR ADAM LR : 0.005, 0.001 (default), 0.0005, 0.0003 (best), 0.0001, 0.00005
 # CNN_CIFAR SGD LR : 2, 1, 0.5(best), 0.25, 0.05, 0.01
 
-#LR=(1e-1 3e-1 1e-2 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
-#IS=(0.1 0.5 0.8 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
-SH=(200 500 1000 2000)
+# Iterate sigma, n-iter as well
 
-for sH in ${SH[@]} ;
+LR=(1e-1 3e-1 1e-2 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
+SUB_SOLV=('non-adaptive' 'adaptive' 'Linear_system' 'Newton')
+HESSIAN_APPROX=('AdaHess' 'WoodFisher' 'LBFGS')
+NUM_IT=(1 4 10)
+SIGMAS=(1 10 100 500)
+#IS=(0.1 0.5 0.8 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+#SH=(200 500 1000 2000)
+
+for sigma in ${SIGMAS} ;
 do
-  ../../master_thesis/bin/python3 train.py --sigma 4.0 --eta 0.1 --sample-size-hessian $sH --sample-size-gradient $sH --subproblem-solver 'non-adaptive' --AdaHess 'False' --delta-momentum 'False' --epochs 14 &
+  for nIt in ${NUM_IT} ;
+  do
+    for hA in ${HESSIAN_APPROX} ;
+    do
+      for lR in ${LR[@]} ;
+      do
+        for SubSolv in ${SUB_SOLV[@]} ;
+        do
+          ../../master_thesis/bin/python3 train.py --sigma $sigma --eta $lR --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 14 &
+        done &
+      done &
+    done &
+  done &
 done
 
 
