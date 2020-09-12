@@ -302,12 +302,17 @@ class SRCutils(Optimizer):
 
     def print_acc(self, batch_size, epoch, batch_idx):
         if self.first_entry:
-
             n_digits = 10
             self.y_onehot = torch.FloatTensor(
                 int(self.defaults['sample_size_gradient']), n_digits)
             self.y_onehot_hess = torch.FloatTensor(
                 int(self.defaults['sample_size_hessian']), n_digits)
+
+            # To get the first eigenvalue, norm
+            #self.least_eig = self.get_hessian_eigen(which='least', maxIter=20)
+            #self.grad, self.params = self.get_grads_and_params()
+            #self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
+
             self.f_name = self.mydir + '/loss_src' \
                           + '_n_iter=' + str(self.defaults['n_iter']) \
                           + '_delta=' + str(self.defaults['delta_momentum']) \

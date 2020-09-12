@@ -11,6 +11,8 @@ optimizers = {'SGD': SGD,
 for key, val in optimizers.items():
     plt.plot(val['computations_done_times_samples'], val['losses'], label=key)
 plt.legend()
-plt.title('w-function')
+plt.title('W-function')
+plt.xlabel('Oracle calls')
+plt.ylabel('Loss')
 plt.savefig('w-function_SGD_SRC.png')
 

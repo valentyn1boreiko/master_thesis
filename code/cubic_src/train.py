@@ -237,7 +237,8 @@ def main():
             optimizer.defaults['train_data'] = data
             optimizer.defaults['target'] = target
 
-
+            # To get the first norm, eig
+            #optimizer.print_acc(len(data), epoch, batch_idx)
             optimizer.step()
             #print('Memory used step: ', psutil.virtual_memory().used >> 20)
             gc.collect()

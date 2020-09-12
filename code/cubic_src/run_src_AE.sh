@@ -5,27 +5,25 @@
 
 # Iterate sigma, n-iter as well
 
-LR=(1e-1 3e-1 1e-2 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
-SUB_SOLV=('non-adaptive' 'adaptive' 'Linear_system' 'Newton')
+#LR=(1e-1 3e-1 1e-2 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
+#SUB_SOLV=('non-adaptive' 'adaptive' 'Linear_system' 'Newton')
+SUB_SOLV=('Linear_system' 'Newton')
 HESSIAN_APPROX=('AdaHess' 'LBFGS')
 NUM_IT=(1 4 10)
 SIGMAS=(1 10 100 500)
 #IS=(0.1 0.5 0.8 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
 #SH=(200 500 1000 2000)
 
-for sigma in ${SIGMAS} ;
+for sigma in ${SIGMAS[@]} ;
 do
-  for nIt in ${NUM_IT} ;
+  for nIt in ${NUM_IT[@]} ;
   do
-    for hA in ${HESSIAN_APPROX} ;
+    for hA in ${HESSIAN_APPROX[@]} ;
     do
-      for lR in ${LR[@]} ;
-      do
         for SubSolv in ${SUB_SOLV[@]} ;
         do
-          ../../master_thesis/bin/python3 train.py --sigma $sigma --eta $lR --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 1 &
+          ../../master_thesis/bin/python3 train.py --sigma $sigma --eta 0.1 --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 1 &
         done &
-      done &
     done &
   done &
 done
