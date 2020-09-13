@@ -195,7 +195,7 @@ class SRCutils(Optimizer):
         self.is_matrix_completion = self.defaults['problem'] == 'matrix_completion'
         self.is_w_function = self.defaults['problem'] == 'w-function'
         self.is_classification = any(map(self.defaults['problem'].__contains__,
-                                         ['CNN', 'LIN_REG']))
+                                         ['CNN', 'LIN_REG', 'CIFAR']))
         self.is_AE = 'AE' in self.defaults['problem']
         self.mydir = os.path.join(os.getcwd(), 'fig', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         try:
@@ -309,9 +309,9 @@ class SRCutils(Optimizer):
                 int(self.defaults['sample_size_hessian']), n_digits)
 
             # To get the first eigenvalue, norm
-            #self.least_eig = self.get_hessian_eigen(which='least', maxIter=20)
-            #self.grad, self.params = self.get_grads_and_params()
-            #self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
+            self.least_eig = self.get_hessian_eigen(which='least', maxIter=20)
+            self.grad, self.params = self.get_grads_and_params()
+            self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
 
             self.f_name = self.mydir + '/loss_src' \
                           + '_n_iter=' + str(self.defaults['n_iter']) \
@@ -588,7 +588,7 @@ class SRCutils(Optimizer):
         self.params_previous = self.params if hasattr(self, 'params') and self.params else 0
         self.grad_previous = self.grad if hasattr(self, 'grad') and self.grad else 0
         self.grad, self.params = self.get_grads_and_params()
-        print('grad and params are loaded, grad dim, norm = ', self.grad.size(), self.grad.norm(p=2), len(self.params))
+        print('grad and params are loaded, grad dim, norm = ', self.grad, self.grad.size(), self.grad.norm(p=2), len(self.params))
         beta = self.defaults.get('beta_lipschitz') if self.defaults.get('beta_lipschitz') is not None\
             else np.sqrt(self.get_hessian_eigen())
         self.least_eig = self.get_hessian_eigen(which='least', maxIter=5)
@@ -1106,7 +1106,8 @@ class SRCutils(Optimizer):
         elif self.is_classification or self.is_AE:  # and self.first_hv:
 
             outputs = self.model(data)
-            self.y_onehot_hess.zero_()
+            if 'LIN_REG' in self.defaults['problem']:
+                self.y_onehot_hess.zero_()
             if 'LIN_REG' in self.defaults['problem']:
                 self.y_onehot_hess.scatter_(1, target.view(-1, 1), 1)
             #print(outputs, self.y_onehot)
@@ -1116,7 +1117,8 @@ class SRCutils(Optimizer):
                 pass
             self.loss_fn(outputs, self.y_onehot_hess if 'LIN_REG' in self.defaults['problem'] else target)\
                 .backward(create_graph=True)
-            autograd_hacks.compute_grad1(self.model)
+            if 'LIN_REG' in self.defaults['problem']:
+                autograd_hacks.compute_grad1(self.model)
 
             #self.loss_fn(outputs, target).backward(create_graph=True)
             #self.first_hv = False
@@ -1166,6 +1168,7 @@ class SRCutils(Optimizer):
 
             if for_eigenvalues:
                 print('hvp - for eigenvalues')
+
                 hv = torch.autograd.grad(gradsh, params, grad_outputs=v_temp,
                                          only_inputs=True, retain_graph=True)
             else:

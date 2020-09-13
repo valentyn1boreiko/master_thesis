@@ -215,8 +215,11 @@ plt.legend()
 plt.savefig(f_name + '.png')
 plt.clf()
 if optimizer_type == 'SRC':
-    plt.plot(computations_done_src[:-1], grad_norms_src, label='grad_norms')
-    plt.plot(computations_done_src[:-1], least_eig_src, label='least_eig')
+    plt.plot(computations_done_src[:-1], grad_norms_src)
+    #plt.plot(computations_done_src[:-1], least_eig_src, label='least_eig')
+    plt.xlabel('Oracle calls')
+    plt.ylabel('Gradient norm')
+    plt.title('W-function')
     plt.legend()
     plt.savefig(f_name + '_eig_norms_' + '.png')
 

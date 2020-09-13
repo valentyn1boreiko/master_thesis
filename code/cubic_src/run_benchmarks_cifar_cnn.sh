@@ -7,8 +7,9 @@ source /Users/valentyn.boreiko@ibm.com/master_thesis_project/master_thesis/bin/a
 # Adam
 LR=(1e-1 3e-1 1e-2 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
 
+
 for train_lr in ${LR[@]} ;
-do ../../master_thesis/bin/python3 benchmarks_networks.py --lr $train_lr --optimizer 'Adam' --epochs 14 & done
+do ../../master_thesis/bin/python3 benchmarks_networks.py --lr $train_lr --optimizer 'Adam' --network-to-use 'CNN_CIFAR' --epochs 14 & done
 
 # SGD
 #LR=(2e0 1e0 5e-1 25e-2 5e-2 1e-2)

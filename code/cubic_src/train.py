@@ -136,8 +136,10 @@ def flatten_tensor_list(tensors):
 def main():
     train_flag = True
     n_digits = 10
-    y_onehot = torch.FloatTensor(int(optimizer.defaults['sample_size_gradient']), n_digits)
-    autograd_hacks.add_hooks(optimizer.model)
+    if 'LIN_REG' in optimizer.defaults['problem']:
+        y_onehot = torch.FloatTensor(int(optimizer.defaults['sample_size_gradient']), n_digits)
+    if args.Hessian_approx == 'WoodFisher':
+        autograd_hacks.add_hooks(optimizer.model)
 
     for epoch in range(args.epochs):
         # Set modules in the the network to train mode
@@ -173,7 +175,7 @@ def main():
                 optimizer.model.train()
                 train_flag = False
 
-            optimizer.print_acc(len(data), epoch, batch_idx)
+            ##optimizer.print_acc(len(data), epoch, batch_idx)
 
             #print('Memory used print_acc: ', psutil.virtual_memory().used >> 20)
             #print('Train data size ', data.size())
@@ -182,12 +184,13 @@ def main():
 
             outputs = optimizer.model(data)
 
-            y_onehot.zero_()
+            if 'LIN_REG' in optimizer.defaults['problem']:
+                y_onehot.zero_()
             if 'LIN_REG' in optimizer.defaults['problem']:
                 y_onehot.scatter_(1, target.view(-1, 1), 1)
 
             try:
-                if optimizer.defaults['Hessian_approx'] == 'WoodFisher':
+                if args.Hessian_approx == 'WoodFisher':
                     autograd_hacks.clear_backprops(optimizer.model)
             except:
                 pass
@@ -218,9 +221,10 @@ def main():
             #exit(0)
             loss.backward(create_graph=True)
 
-            if optimizer.defaults['Hessian_approx'] == 'WoodFisher':
+            if args.Hessian_approx == 'WoodFisher':
                 autograd_hacks.compute_grad1(optimizer.model)
             #print(getBack(loss.grad_fn))
+
             """
             for param in optimizer.param_groups[0]['params']:
                 if (param.grad is None or \
@@ -230,15 +234,16 @@ def main():
 
                 print('each param', param.size(), param)
                 print('after its mean', param.grad)
-            exit(0)
-            """
+            print(optimizer.get_grads_and_params()[0])
+            exit(0)"""
+
             #loss_fn(outputs, target).backward(create_graph=True)
             #print('Memory used loss: ', psutil.virtual_memory().used >> 20)
             optimizer.defaults['train_data'] = data
             optimizer.defaults['target'] = target
 
             # To get the first norm, eig
-            #optimizer.print_acc(len(data), epoch, batch_idx)
+            optimizer.print_acc(len(data), epoch, batch_idx)
             optimizer.step()
             #print('Memory used step: ', psutil.virtual_memory().used >> 20)
             gc.collect()

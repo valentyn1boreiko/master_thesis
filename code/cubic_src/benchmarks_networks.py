@@ -206,10 +206,11 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
             target = data
 
         output = model(data)
-        y_onehot.zero_()
-        y_onehot.scatter_(1, target.view(-1, 1), 1)
+        if network_to_use == 'LIN_REG_MNIST':
+            y_onehot.zero_()
+            y_onehot.scatter_(1, target.view(-1, 1), 1)
 
-        loss = criterion(output, y_onehot)
+        loss = criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target)
         #loss = criterion(output, target)
         #for i, param in enumerate(optimizer.param_groups[0]['params']):
         #    print(i)
@@ -269,7 +270,7 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                         y_onehot.zero_()
                         y_onehot.scatter_(1, target.view(-1, 1), 1)
                         #print(y_onehot[:3], output[:3])
-                        test_loss[l_i] += criterion(output, y_onehot).item() * n
+                        test_loss[l_i] += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item() * n
                         #test_loss[l_i] += criterion(output, target).item() * n  # sum up batch loss #  reduction='sum'
                     elif 'CIFAR' in network_to_use:
                         test_loss[l_i] += criterion(output, target).item()
@@ -305,10 +306,11 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
             output = model(data)
             if is_classification:
                 if 'MNIST' in network_to_use:
-                    y_onehot.zero_()
-                    y_onehot.scatter_(1, target.view(-1, 1), 1)
+                    if network_to_use == 'LIN_REG_MNIST':
+                        y_onehot.zero_()
+                        y_onehot.scatter_(1, target.view(-1, 1), 1)
 
-                    train_loss += criterion(output, y_onehot).item() * n
+                    train_loss += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item() * n
                     #train_loss += criterion(output, target).item() * n  # sum up batch loss # , reduction='sum'
                 elif 'CIFAR' in network_to_use:
                     train_loss += criterion(output, target).item()
