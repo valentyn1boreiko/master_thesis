@@ -175,7 +175,7 @@ def main():
                 optimizer.model.train()
                 train_flag = False
 
-            ##optimizer.print_acc(len(data), epoch, batch_idx)
+            #optimizer.print_acc(len(data), epoch, batch_idx)
 
             #print('Memory used print_acc: ', psutil.virtual_memory().used >> 20)
             #print('Train data size ', data.size())
@@ -243,7 +243,9 @@ def main():
             optimizer.defaults['target'] = target
 
             # To get the first norm, eig
+            #print('Print acc!')
             optimizer.print_acc(len(data), epoch, batch_idx)
+
             optimizer.step()
             #print('Memory used step: ', psutil.virtual_memory().used >> 20)
             gc.collect()

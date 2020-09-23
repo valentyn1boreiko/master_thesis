@@ -22,9 +22,110 @@ batch_size = 100
 n_digits = 10
 y_onehot = torch.FloatTensor(batch_size, n_digits)
 
+
+# ResNet
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicBlock, self).__init__()
+        self.conv1 = nn.Conv2d(
+            in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion*planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion*planes,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion*planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
+                               stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = nn.Conv2d(planes, self.expansion *
+                               planes, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(self.expansion*planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion*planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion*planes,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion*planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = F.relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, num_classes=10):
+        super(ResNet, self).__init__()
+        self.in_planes = 64
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.linear = nn.Linear(512*block.expansion, num_classes)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = F.avg_pool2d(out, 4)
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+
+def ResNet18():
+    return ResNet(BasicBlock, [2, 2, 2, 2])
+# ResNet
+
+
 class Flatten(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), -1)
+
 
 
 def LinearRegression():
@@ -179,6 +280,7 @@ def getBack(var_grad_fn):
             except AttributeError as e:
                 getBack(n[0])
 
+
 def weights_init(m):
     if isinstance(m, nn.Linear):
         #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
@@ -186,6 +288,7 @@ def weights_init(m):
         bound = math.sqrt(6 / (fan_in + fan_out))
         nn.init.uniform_(m.bias, -bound, bound)
         nn.init.uniform_(m.weight, -bound, bound)
+
 
 def to_img(x):
     #x = 0.5 * (x + 1)
@@ -241,7 +344,6 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
                            + args.optimizer + "_" + str(epoch) + ".pt")
 
 
-
 def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use, x_axis):
     torch.manual_seed(7)
 
@@ -249,7 +351,7 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
     test_loss, train_loss = [0, 0], 0
     correct, train_correct = 0, 0
     is_classification = any(map(network_to_use.__contains__,
-                                ['CNN', 'LIN_REG']))
+                                ['CNN', 'LIN_REG', 'CIFAR']))
     is_AE = network_to_use == 'AE_MNIST'
     torch.manual_seed(7)
     with torch.no_grad():
@@ -384,7 +486,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
     parser.add_argument('--network-to-use', type=str, default='AE_MNIST',
-                        # AE_MNIST, CNN_MNIST, CNN_CIFAR, LIN_REG_MNIST
+                        # AE_MNIST, CNN_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
                         help='which network and problem to use (default: CNN_MNIST)')
     parser.add_argument('--optimizer', type=str, default='Adam',  # SGD, Adam, Adagrad
                         help='which optimizer to use (default: SGD)')
@@ -436,18 +538,23 @@ def main():
         'LIN_REG_MNIST': transforms.Compose([
             transforms.ToTensor(),
             #transforms.Normalize((0.5,), (0.5,))
-        ])
+        ]),
+        'ResNet_18_CIFAR': transforms.Compose(
+            [transforms.ToTensor(),
+             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     }
 
     models = {'AE_MNIST': AE_MNIST(),  # AE_MNIST_torch, AE_MNIST
               'CNN_MNIST': Net(),
               'CNN_CIFAR': CIFAR_Net(),
-              'LIN_REG_MNIST': LinearRegression()}
+              'LIN_REG_MNIST': LinearRegression(),
+              'ResNet_18_CIFAR': ResNet18()}
 
     criteria = {'AE_MNIST': nn.MSELoss(reduction='mean'),
                 'CNN_MNIST': F.nll_loss,
                 'CNN_CIFAR': nn.CrossEntropyLoss(),
-                'LIN_REG_MNIST': nn.MSELoss(reduction='mean')}  # nn.CrossEntropyLoss(reduction='mean')}
+                'LIN_REG_MNIST': nn.MSELoss(reduction='mean'),
+                'ResNet_18_CIFAR': nn.CrossEntropyLoss()}  # nn.CrossEntropyLoss(reduction='mean')}
 
 
     model = models[network_to_use].to(device)

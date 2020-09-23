@@ -5,7 +5,7 @@
 
 # Iterate sigma, n-iter as well
 
-LR=(1e-1 3e-1 1e-2) # 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
+LR=(1e-1 3e-1 1e-2 5e-3 1e-3 5e-4 3e-4 1e-4 5e-5)
 #SUB_SOLV=('non-adaptive' 'adaptive' 'Linear_system' 'Newton')
 #SUB_SOLV=('adaptive')
 SUB_SOLV=('non-adaptive')
@@ -24,7 +24,7 @@ do
       do
         for SubSolv in ${SUB_SOLV[@]} ;
         do
-          ../../master_thesis/bin/python3 train.py --sigma $sigma --eta $lR --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 1 &
+          ../../master_thesis/bin/python3 train.py --sigma $sigma --eta $lR --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 14 &
         done &
       done &
     done &

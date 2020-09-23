@@ -309,7 +309,7 @@ class SRCutils(Optimizer):
                 int(self.defaults['sample_size_hessian']), n_digits)
 
             # To get the first eigenvalue, norm
-            self.least_eig = self.get_hessian_eigen(which='least', maxIter=20)
+            self.least_eig = self.get_hessian_eigen(which='least', maxIter=2)
             self.grad, self.params = self.get_grads_and_params()
             self.grad_norms = self.grad.norm(p=2).detach().cpu().numpy()
 
@@ -585,8 +585,8 @@ class SRCutils(Optimizer):
 
     def cubic_subsolver(self):
 
-        self.params_previous = self.params if hasattr(self, 'params') and self.params else 0
-        self.grad_previous = self.grad if hasattr(self, 'grad') and self.grad else 0
+        self.params_previous = self.params if hasattr(self, 'params') else 0
+        self.grad_previous = self.grad if hasattr(self, 'grad') else 0
         self.grad, self.params = self.get_grads_and_params()
         print('grad and params are loaded, grad dim, norm = ', self.grad, self.grad.size(), self.grad.norm(p=2), len(self.params))
         beta = self.defaults.get('beta_lipschitz') if self.defaults.get('beta_lipschitz') is not None\
@@ -1117,7 +1117,7 @@ class SRCutils(Optimizer):
                 pass
             self.loss_fn(outputs, self.y_onehot_hess if 'LIN_REG' in self.defaults['problem'] else target)\
                 .backward(create_graph=True)
-            if 'LIN_REG' in self.defaults['problem']:
+            if self.defaults['Hessian_approx'] == 'WoodFisher':
                 autograd_hacks.compute_grad1(self.model)
 
             #self.loss_fn(outputs, target).backward(create_graph=True)

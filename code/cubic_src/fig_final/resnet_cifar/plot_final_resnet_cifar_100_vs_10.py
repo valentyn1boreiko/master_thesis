@@ -4,8 +4,8 @@ from torch import tensor
 import glob
 
 
-files = ['loss_src_n_iter=1_delta=False_Hessian_approx=AdaHess_Solver=Linear_system_sigma=1.0_delta_step=0.001_eta=0.1_AE_MNIST_Linear_system_H_size=100_g_size=100.csv',
-         'loss_src_n_iter=1_delta=False_Hessian_approx=AdaHess_Solver=Linear_system_sigma=1.0_delta_step=0.001_eta=0.1_AE_MNIST_Linear_system_H_size=10_g_size=100.csv']
+files = ['loss_src_n_iter=4_delta=False_Hessian_approx=AdaHess_Solver=adaptive_sigma=100.0_delta_step=0.001_eta=0.01_ResNet_18_CIFAR_adaptive_H_size=100_g_size=100.csv',
+         'loss_src_n_iter=4_delta=False_Hessian_approx=AdaHess_Solver=adaptive_sigma=100.0_delta_step=0.001_eta=0.01_ResNet_18_CIFAR_adaptive_H_size=10_g_size=100.csv']
 
 cts = 'computations'
 
@@ -26,10 +26,10 @@ for label, df in dfs.items():
              label=label)
 
 plt.legend(bbox_to_anchor=(1.04, 1), loc='upper left')
-plt.title('Autoencoder with MNIST dataset - Hessian batch size 100 vs. 10')
+plt.title('ResNet-18 with CIFAR-10 dataset - Hessian batch size 100 vs. 10')
 plt.xlabel('Computations')
 plt.ylabel('Loss')
-plt.savefig('ae_MNIST_hsize.png', bbox_inches="tight")
+plt.savefig('resnet_CIFAR_hsize.png', bbox_inches="tight")
 
 '''
 SGD = pd.read_csv('../w-function/computations_momentum_loss_SGD_non-convex_300_300_0.01_0.0_1.csv')
