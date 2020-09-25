@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import pandas as pd
-from torch import tensor
 import glob
 
 files = glob.glob("*.csv")
@@ -27,7 +26,7 @@ plt.ylabel('Loss')
 plt.savefig('resnet_CIFAR.png', bbox_inches="tight")
 
 '''
-SGD = pd.read_csv('../w-function/computations_momentum_loss_SGD_non-convex_300_300_0.01_0.0_1.csv')
+SGD = pd.read_csv('../w-function/computations_momentum_loss_SGD(old)_non-convex_300_300_0.01_0.0_1.csv')
 SRC = pd.read_csv('../w-function/computations_loss_SRC_non-convex_300_300_non-adaptive_0.06_10_1_1_False_0.9_1.csv')
 
 optimizers = {'SGD': SGD,

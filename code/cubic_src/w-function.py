@@ -4,8 +4,9 @@ from torch import optim
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from config import wfunction_parser, update_params
 
-
+torch.manual_seed(7)
 def model(xy):
     eps = 0.01
     L = 5
@@ -28,9 +29,6 @@ def model(xy):
             + 1 / 3 * (x - (L + 1) * np.sqrt(eps)) ** 3 \
             - 1 / 3 * (3 * L + 1) * eps ** (3 / 2)
 
-    #return torch.sin(x) + y**2
-    #return ((x**2-100)*(x**2-1))/(100/3) - 100/(100/3) + 100*y**2
-    #return ((x**2-0.8)*(x**2-0.01))/(100/3) - 0.008/(100/3) + 10*y**2
     return w + 10*y**2
 
 
@@ -39,27 +37,33 @@ def convex_func(xy):
     return x**2 + y**2
 
 
+args = wfunction_parser.parse_args()
+
 opt = dict(model=model,
            loss_fn=model,
            n=1000,
            log_interval=100,
            problem='w-function',
-           sample_size_hessian=300,  # 0.3
-           sample_size_gradient=300,  # 0.3
+           sample_size_hessian=300,
+           sample_size_gradient=300,
            subproblem_solver='non-adaptive',
-           eta=0.3,
-           n_iter=5,
-           initial_penalty_parameter=2,  # 150, 1500
+           Hessian_approx='None',
+           eta=0.01,  # 0.05
+           n_iter=10,
+           initial_penalty_parameter=1,
            beta_lipschitz=1,
            delta_momentum=False,
-           delta_momentum_stepsize=.9)  # 0.9
+           delta_momentum_stepsize=.9,
+           verbose=True)
+
+opt = update_params(opt, args)
 
 problem_type = 'non-convex'  # convex, non-convex
-max_iter = int(4e2)
-step_size = 0.04  # 0.04, 0.001
-momentum = 0.9  # 0.7
+max_iter = int(8e2)  # 1e4 for SRC, 8e2 for SGD
+step_size = opt['eta']  # 0.04, 0.001
+momentum = 0.0  # 0.7
 
-optimizer_type = 'SRC'  # SRC, SGD, Adam
+optimizer_type = args.optimizer  # SRC, SGD, Adam
 to_plot = 'loss'  # grad_norm, loss
 
 averaging_ops = 1
@@ -107,7 +111,7 @@ elif optimizer_type == 'Adam':
              + '_' + str(averaging_ops)
 
 for op_num in range(averaging_ops):
-    X = torch.tensor([10.0, 10.0], requires_grad=True)
+    X = torch.tensor([0.0, 0.0], requires_grad=True)
     if optimizer_type == 'SRC':
         optimizer = SRC([X], opt=opt)
     elif optimizer_type == 'SGD':
@@ -126,28 +130,14 @@ for op_num in range(averaging_ops):
                     losses[i] = (losses[i] * op_num + loss_.item()) / (op_num + 1)
 
         if op_num == 0 and i > 0:
-            # Nr of gradient samples
-            samples_seen.append(samples_seen[-1]
-                            + int(opt['sample_size_gradient'])
-                            + int((opt['sample_size_hessian'])
-                                  if optimizer_type == 'SRC' else 0)
-                            )
-
-        print('idx ', i, losses
-        if to_plot == 'loss' else grad_norms,
-              samples_seen)
+            samples_seen.append(samples_seen[-1] + int(opt['sample_size_gradient']))
 
         optimizer.zero_grad()
         loss_.backward(create_graph=True)
         if to_plot == 'grad_norm':
             for p in optimizer.param_groups[0]['params']:
                 grad_norms.append(p.norm(p=2))
-        """
-        if i == 2:
-            plt.plot(optimizer.computations_done[:-1] if optimizer_type == 'SRC' else samples_seen,
-                     losses if to_plot == 'loss' else grad_norms)
-            plt.savefig(f_name + '.png')
-        """
+
         # Generate N(0, 1) perturbations of the gradient
         if optimizer_type == 'SRC':
             optimizer.perturb()
@@ -158,23 +148,16 @@ for op_num in range(averaging_ops):
                     (int(opt['sample_size_gradient']),
                      p.shape[0])
                 ) + p.grad).mean(dim=0)
-            print('param', p, p.grad)
 
         optimizer.step()
-        print('loss = ', loss_.item())
         if optimizer_type == 'SRC':
-            computations_done_src.append(optimizer.computations_done)
+            computations_done_src.append(optimizer.computations_done_times_samples)
             grad_norms_src.append(optimizer.grad_norms)
             least_eig_src.append(optimizer.least_eig)
-            print(losses, computations_done_src)
-            #assert len(losses) == len(optimizer.computations_done[:-1]), 'losses != computations_done !'
 
     print('Epoch {} done!'.format(op_num))
 
-print(samples_seen)
-print(losses)
-pd.DataFrame({'samples': samples_seen,
-              'computations': list(np.array(samples_seen) / int(opt['sample_size_gradient']))
+pd.DataFrame({'computations_done_times_samples': samples_seen
               if optimizer_type in ['Adam', 'SGD'] else computations_done_src[:-1],
               'losses'
               if to_plot == 'loss' else 'grad_norm':
@@ -186,16 +169,19 @@ pd.DataFrame({'samples': samples_seen,
                index=None)
 
 if optimizer_type in ['Adam', 'SGD']:
-    plt.plot(list(np.array(samples_seen) / int(opt['sample_size_gradient'])),
+    plt.plot(samples_seen,
              losses if to_plot == 'loss' else grad_norms, label='loss')
 elif optimizer_type == 'SRC':
-    plt.plot(computations_done_src[120:-1], losses[120:] if to_plot == 'loss' else grad_norms, label='loss')
+    plt.plot(computations_done_src[:-1], losses[:] if to_plot == 'loss' else grad_norms, label='loss')
 plt.legend()
 plt.savefig(f_name + '.png')
 plt.clf()
+
 if optimizer_type == 'SRC':
-    plt.plot(computations_done_src[:-1], grad_norms_src, label='grad_norms')
-    plt.plot(computations_done_src[:-1], least_eig_src, label='least_eig')
+    plt.plot(computations_done_src[:-1], grad_norms_src)
+    plt.xlabel('Oracle calls')
+    plt.ylabel('Gradient norm')
+    plt.title('W-function')
     plt.legend()
     plt.savefig(f_name + '_eig_norms_' + '.png')
 

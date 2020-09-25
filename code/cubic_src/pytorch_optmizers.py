@@ -38,31 +38,26 @@ class SRC(utils.SRCutils):
             print('Memory before m', psutil.virtual_memory().used >> 20)
             self.m = (self.b_1 * self.m + (1 - self.b_1) * delta.detach()).detach()
             print('Memory before v', psutil.virtual_memory().used >> 20)
-            self.v = (self.b_2 * self.v + (1 - self.b_2) * delta.detach()**2).detach()
+            self.v = (self.b_2 * self.v + (1 - self.b_2) * delta.detach() ** 2).detach()
             print('Memory before m_hat', psutil.virtual_memory().used >> 20)
-            m_hat = (self.m / (1 - self.b_1**self.t)).detach()
+            m_hat = (self.m / (1 - self.b_1 ** self.t)).detach()
             print('Memory before v_hat', psutil.virtual_memory().used >> 20)
-            v_hat = (self.v / (1 - self.b_2**self.t)).detach()
+            v_hat = (self.v / (1 - self.b_2 ** self.t)).detach()
             print('Memory before delta', psutil.virtual_memory().used >> 20)
             delta = (self.defaults['delta_momentum_stepsize'] \
-                * (m_hat / (torch.sqrt(v_hat) + self.epsilon))).detach()
+                     * (m_hat / (torch.sqrt(v_hat) + self.epsilon))).detach()
             print('Memory after delta', psutil.virtual_memory().used >> 20)
-        
+
         print('Memory before update', psutil.virtual_memory().used >> 20)
         self.delta_m_norm = delta_m.norm(p=2)
-        self.model_update(delta, delta_m)
-        del(self.params)
-        del(self.grad)
+        self.model_update(delta)
+        del (self.params)
+        del (self.grad)
         print('Memory after update', psutil.virtual_memory().used >> 20)
         self.samples_seen += self.get_num_points() + self.get_num_points('hessian')
 
-
         # Check if we are doing enough progress
-        print('final accuracy ', -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']))
-        # ToDo: check if condition delta_m <= 0 is required
-        if 0 >= delta_m >= -1/100 * np.sqrt(self.defaults['grad_tol']**3 / self.defaults['sigma']):
-            print('do cubic final subsolver')
-            delta = self.cubic_final_subsolver()
-            self.param_groups[0]['params'].data.add_(delta)
+        print('final accuracy ', -1 / 100 * np.sqrt(self.defaults['grad_tol'] ** 3 / self.defaults['sigma']))
+
 
         return loss

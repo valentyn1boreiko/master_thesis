@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from torch import tensor
 import glob
+import numpy as np
 
 files = glob.glob("*.csv")
 cts = 'computations_times_sample'
@@ -9,22 +10,28 @@ cts = 'computations_times_sample'
 dfs = {}
 
 for file in files:
-    if 'H_size=100' not in file and 'LBFGS_Solver=Newton' not in file:
+    if 'H_size=100' not in file:
         split_ = file.split("_")
-        label = "{}".format(split_[3]) \
+        label = "{}".format(split_[4]) \
             if 'loss' not in file else \
             'SRC, ' + split_[5]+'_' + split_[6] + ', ' + split_[7].replace('Linear', 'Linear_system')
         dfs[label] = pd.read_csv(file)
 
-for label, df in dfs.items():
-    plt.plot(df[cts if cts in df.columns else 'samples'][2:], df['train_losses'][2:],
-             label=label)
+linestyles = ['-', '--', '-.', ':']
+n = len(linestyles)
+
+n_items = len(dfs.items())
+for i, (label, df) in enumerate(dfs.items()):
+    lw = 1 - 0.8*(i/n_items)
+    print(lw)
+    plt.plot(df[cts if cts in df.columns else 'samples'][5:], df['train_losses'][5:],
+             label=label, linestyle=linestyles[i%n], linewidth=lw)
 
 plt.legend(bbox_to_anchor=(1.04, 1), loc='upper left')
-plt.title('CNN with CIFAR-10 dataset')
+plt.title('Linear Regression with MNIST dataset')
 plt.xlabel('Oracle calls')
 plt.ylabel('Training Loss')
-plt.savefig('cnn_CIFAR.png', bbox_inches="tight")
+plt.savefig('linreg_MNIST.png', bbox_inches="tight")
 
 '''
 SGD = pd.read_csv('../w-function/computations_momentum_loss_SGD(old)_non-convex_300_300_0.01_0.0_1.csv')

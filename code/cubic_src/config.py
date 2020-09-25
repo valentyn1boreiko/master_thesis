@@ -6,6 +6,10 @@ from torchvision.datasets import MNIST, CIFAR10
 import pytorch_optmizers
 import torch.nn.functional as F
 from torch import nn
+import argparse
+import autograd_hacks
+
+
 torch.manual_seed(7)
 torch.set_printoptions(precision=10)
 
@@ -209,6 +213,11 @@ def to_img(x):
     return x
 
 
+def update_params(dct, src):
+    for key, value in vars(src).items():
+        dct[key] = value
+    return dct
+
 network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
 # Changing activation works only for the AE
 activation = 'softplus'  # swish, softplus, relu
@@ -329,3 +338,50 @@ def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_
     train_loader = dataloader_.DataLoader(train_, **dataloader_args)
     return dataloader_args, train_loader
 
+# Benchmarks' only config
+
+parser_benchmarks = argparse.ArgumentParser(description='PyTorch benchmarks')
+parser_benchmarks.add_argument('--network-to-use', type=str, default='AE_MNIST',
+                    # AE_MNIST, CNN_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
+                    help='which network and problem to use (default: CNN_MNIST)')
+parser_benchmarks.add_argument('--optimizer', type=str, default='Adam',
+                    # SGD, Adam, Adagrad
+                    help='which optimizer to use (default: SGD)')
+parser_benchmarks.add_argument('--batch-size', type=int, default=100, metavar='N',
+                    help='input batch size for training (default: 64)')
+parser_benchmarks.add_argument('--test-batch-size', type=int, default=100, metavar='N',
+                    help='input batch size for testing (default: 1000)')
+parser_benchmarks.add_argument('--epochs', type=int, default=14, metavar='N',
+                    help='number of epochs to train (default: 14)')
+parser_benchmarks.add_argument('--lr', type=float, default=0.001, metavar='LR',
+                    help='learning rate (default: 1.0)')
+parser_benchmarks.add_argument('--gamma', type=float, default=0.7, metavar='M',
+                    help='Learning rate step gamma (default: 0.7)')
+parser_benchmarks.add_argument('--no-cuda', action='store_true', default=False,
+                    help='disables CUDA training')
+parser_benchmarks.add_argument('--seed', type=int, default=7, metavar='S',
+                    help='random seed (default: 1)')
+parser_benchmarks.add_argument('--log-interval', type=int, default=100, metavar='N',
+                    help='how many samples to wait before logging training status (default: 100 * batch_size)')
+
+parser_benchmarks.add_argument('--plot-interval', type=int, default=500, metavar='N',
+                    help='how many samples to wait before logging training status')
+
+parser_benchmarks.add_argument('--save-model', action='store_true', default=False,
+                    help='For Saving the current Model')
+parser_benchmarks.add_argument('--plot-results', default=True,
+                    help='If to plot the results')
+
+
+# W-function config
+wfunction_parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+
+wfunction_parser.add_argument('--eta', type=float, default=0.06,
+                    help='learning rate for the inner subproblem (default: 0.3)')
+wfunction_parser.add_argument('--sample-size-hessian', type=int, default=300,
+                    help='Hessian batch size')
+wfunction_parser.add_argument('--sample-size-gradient', type=int, default=300,
+                    help='gradient batch size')
+wfunction_parser.add_argument('--optimizer', type=str, default='SGD',
+                              help='type of the optimizer (SGD, SRC, Adam)')
+# W-function config

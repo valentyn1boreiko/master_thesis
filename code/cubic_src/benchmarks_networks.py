@@ -1,31 +1,28 @@
 from __future__ import print_function
-import argparse
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import StepLR
-import matplotlib.pyplot as plt
 import datetime
 import pandas as pd
 import os
 import matplotlib
-from config import transforms_dict, models, criteria, to_img, weights_init, dataset
+from config import transforms_dict, models, criteria, weights_init, dataset, parser_benchmarks
 
 matplotlib.use('Agg')
 
-torch.manual_seed(7)
+#torch.manual_seed(7)
 torch.set_printoptions(precision=10)
-batch_size = 100
-n_digits = 10
-y_onehot = torch.FloatTensor(batch_size, n_digits)
 
 
-def train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis):
+def train(args, model, device, train_loader, optimizer, epoch,
+          test_loader, criterion, network_to_use, y_onehot):
     model.train()
 
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
+        optimizer.samples_seen[-1] += len(data)
 
         if network_to_use == 'AE_MNIST':
             data = Variable(data.view(data.size(0), -1))
@@ -39,20 +36,22 @@ def train(args, model, device, train_loader, optimizer, epoch, test_loader, crit
         loss = criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target)
         loss.backward()
         optimizer.step()
-        if batch_idx * len(data) % args.log_interval == 0 and batch_idx != 0:
+
+        if batch_idx % args.log_interval == args.log_interval - 1 and batch_idx != 0:
             print('batch idx', batch_idx)
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        10. * batch_idx / len(train_loader), loss.item()))
-            test(model, device, test_loader, train_loader, optimizer, batch_idx * len(data), args.log_interval, criterion,
-                 network_to_use, x_axis)
+            test(model, device, test_loader, train_loader, optimizer, args.log_interval, criterion,
+                 network_to_use, y_onehot)
 
             if args.save_model:
                 torch.save(model.state_dict(), "models/benchmarks_" + network_to_use + "_"
                            + args.optimizer + "_" + str(epoch) + ".pt")
 
 
-def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, log_interval, criterion, network_to_use, x_axis):
+def test(model, device, test_loaders, train_loader, optimizer,
+         log_interval, criterion, network_to_use, y_onehot):
 
     model.eval()
     test_loss, train_loss = [0, 0], 0
@@ -75,27 +74,16 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                     if 'MNIST' in network_to_use:
                         y_onehot.zero_()
                         y_onehot.scatter_(1, target.view(-1, 1), 1)
-                        test_loss[l_i] += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item()  # * n
+                        test_loss[l_i] += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item() * n
                     elif 'CIFAR' in network_to_use:
                         test_loss[l_i] += criterion(output, target).item()
                 elif is_AE:
-                    test_loss[l_i] += criterion(output, target).item()  # * n
+                    test_loss[l_i] += criterion(output, target).item() * n
                 if is_classification:
                     pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                     correct += pred.eq(target.view_as(pred)).sum().item()
 
             test_loss[l_i] /= len(test_loader.dataset)
-
-
-
-    if is_AE:
-        _img = to_img(output)[2].reshape(28, 28)
-        _img_2 = to_img(output)[3].reshape(28, 28)
-
-        _img_target = to_img(target)[2].reshape(28, 28)
-        _img_target_2 = to_img(target)[3].reshape(28, 28)
-
-        test_img = (_img, _img_2, _img_target, _img_target_2)
 
     with torch.no_grad():
         for data, target in train_loader:
@@ -113,25 +101,16 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
                         y_onehot.zero_()
                         y_onehot.scatter_(1, target.view(-1, 1), 1)
 
-                    train_loss += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item()  # * n
+                    train_loss += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item() * n
                 elif 'CIFAR' in network_to_use:
                     train_loss += criterion(output, target).item()
             elif is_AE:
-                train_loss += criterion(output, target).item()  # * n
+                train_loss += criterion(output, target).item() * n
             if is_classification:
                 pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 train_correct += pred.eq(target.view_as(pred)).sum().item()
     train_loss /= len(train_loader.dataset)
 
-    if is_AE:
-        _img = to_img(output)[2].reshape(28, 28)
-        _img_2 = to_img(output)[3].reshape(28, 28)
-
-        _img_target = to_img(target)[2].reshape(28, 28)
-        _img_target_2 = to_img(target)[3].reshape(28, 28)
-
-
-        train_img = (_img, _img_2, _img_target, _img_target_2)
 
     if is_classification:
         print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
@@ -141,28 +120,13 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
         print('\nTest set: Average loss: {:.4f}\n'.format(
             test_loss[1]))
 
-        if False and samples_seen_ % 5 * log_interval == 0:
-            fig = plt.figure(figsize=(4, 8))
-            for i, _img in enumerate([test_img, train_img]):
-                for j in range(len(_img)):
-                    fig.add_subplot(2, 2, j + 1)
-                    plt.imshow(_img[j], cmap='gray')
-
-                plt.savefig(optimizer.f_name + '_' + str(samples_seen_)
-                            + '_' + ('test' if i == 0 else 'train') + '.png')
-                plt.clf()
-
-    samples_seen = 0 if optimizer.first_entry \
-        else optimizer.samples_seen[-1] + log_interval
 
     # How many batches went through, i.e., how many computations were done
-    log_interval /= n
 
     computations_done = 0 if optimizer.first_entry \
         else optimizer.computations_done[-1] + log_interval
     
     optimizer.computations_done[-1] = computations_done
-    optimizer.samples_seen[-1] = samples_seen
     optimizer.losses[-1] = test_loss[1]
     pd.DataFrame({'samples': [optimizer.samples_seen[-1]],
                   'computations': [optimizer.computations_done[-1]],
@@ -181,37 +145,7 @@ def test(model, device, test_loaders, train_loader, optimizer, samples_seen_, lo
 def main():
     # Training settings
 
-    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--network-to-use', type=str, default='AE_MNIST',
-                        # AE_MNIST, CNN_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
-                        help='which network and problem to use (default: CNN_MNIST)')
-    parser.add_argument('--optimizer', type=str, default='Adam',  # SGD, Adam, Adagrad
-                        help='which optimizer to use (default: SGD)')
-    parser.add_argument('--batch-size', type=int, default=batch_size, metavar='N',  # 60 for AE_MNIST, 1 for CNN_MNIST
-                        help='input batch size for training (default: 64)')
-    parser.add_argument('--test-batch-size', type=int, default=batch_size, metavar='N',
-                        help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=14, metavar='N',
-                        help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',  # 0.3, 0.001, 0.005
-                        help='learning rate (default: 1.0)')
-    parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
-                        help='Learning rate step gamma (default: 0.7)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables CUDA training')
-    parser.add_argument('--seed', type=int, default=7, metavar='S',
-                        help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=100 * batch_size, metavar='N',
-                        help='how many samples to wait before logging training status (default: 100 * batch_size)')
-
-    parser.add_argument('--plot-interval', type=int, default=500, metavar='N',
-                        help='how many samples to wait before logging training status')
-
-    parser.add_argument('--save-model', action='store_true', default=False,
-                        help='For Saving the current Model')
-    parser.add_argument('--plot-results', default=True,
-                        help='If to plot the results')
-    args = parser.parse_args()
+    args = parser_benchmarks.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -221,8 +155,7 @@ def main():
     x_axis = 'computations'  # computations, samples_seen
 
     model = models[network_to_use].to(device)
-    if network_to_use != 'CNN_CIFAR':
-        model.apply(weights_init)
+    model.apply(weights_init)
 
     criterion = criteria[network_to_use]
 
@@ -290,11 +223,16 @@ def main():
           len(list(test_loader_)))
 
     print('used device - ', device)
-    test(model, device, test_loader, train_loader, optimizer, 0, args.log_interval, criterion, network_to_use, x_axis)
-    print('Save model', args.save_model)
+
+    # For Linear Regression
+    n_digits = 10
+    y_onehot = torch.FloatTensor(args.batch_size, n_digits)
+    # For Linear Regression
+
+    test(model, device, test_loader, train_loader, optimizer, args.log_interval, criterion, network_to_use, y_onehot)
     for epoch in range(1, args.epochs + 1):
 
-        train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, x_axis)
+        train(args, model, device, train_loader, optimizer, epoch, test_loader, criterion, network_to_use, y_onehot)
 
         if scheduler:
             scheduler.step()
