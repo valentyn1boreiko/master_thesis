@@ -143,8 +143,7 @@ def main():
 
             if 'LIN_REG' in optimizer.defaults['problem']:
                 y_onehot.zero_()
-            if 'LIN_REG' in optimizer.defaults['problem']:
-                y_onehot.scatter_(1, target.view(-1, 1), 1)
+                y_onehot.scatter_(1, target.view(-1, 1).to('cpu'), 1)
 
             try:
                 if args.Hessian_approx == 'WoodFisher':
@@ -152,7 +151,7 @@ def main():
             except:
                 pass
 
-            loss = loss_fn(outputs, y_onehot if 'LIN_REG' in optimizer.defaults['problem'] else target)
+            loss = loss_fn(outputs, y_onehot.to(optimizer.defaults['dev']) if 'LIN_REG' in optimizer.defaults['problem'] else target)
 
             loss.backward(create_graph=True)
 

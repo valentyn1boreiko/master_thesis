@@ -258,10 +258,9 @@ class SRCutils(Optimizer):
                         loss[l_i] += self.loss_fn(outputs, target_).item() * n
                     elif 'LIN_REG' in self.defaults['problem']:
                         self.y_onehot.zero_()
-                        self.y_onehot.scatter_(1, target_.view(-1, 1), 1)
-                        self.y_onehot.scatter_(1, target_.view(-1, 1), 1)
+                        self.y_onehot.scatter_(1, target_.view(-1, 1).to('cpu'), 1)
 
-                        loss[l_i] += self.loss_fn(outputs, self.y_onehot).item() * n
+                        loss[l_i] += self.loss_fn(outputs, self.y_onehot.to(self.defaults['dev'])).item() * n
                     elif 'CIFAR' in self.defaults['problem']:
                         loss[l_i] += self.loss_fn(outputs, target_).item()
                     # Get prediction
@@ -457,10 +456,15 @@ class SRCutils(Optimizer):
                 if b == 0:
                     break
                 q = Hv / b
-            eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
-            # a_s = torch.tensor(a_s).to(self.defaults['dev'])
-            # b_s = torch.tensor(b_s[:-1]).to(self.defaults['dev'])
-            # eigs, _ = lanczos_tridiag_to_diag(torch.diag_embed(a_s) + torch.diag_embed(b_s, offset=-1) + torch.diag_embed(b_s, offset=1))
+            if self.defaults['dev'] == 'cpu':
+                eigs, _ = la.eigh_tridiagonal(a_s, b_s[:-1])
+            else:
+                a_s = torch.tensor(a_s).to(self.defaults['dev'])
+                b_s = torch.tensor(b_s[:-1]).to(self.defaults['dev'])
+                eigs, _ = lanczos_tridiag_to_diag(torch.diag_embed(a_s)
+                                                  + torch.diag_embed(b_s, offset=-1)
+                                                  + torch.diag_embed(b_s, offset=1))
+
             return max(abs(eigs)) if which == 'biggest' else min(eigs)
 
     def get_hessian_eigen(self, **kwargs):
@@ -472,7 +476,7 @@ class SRCutils(Optimizer):
         """
         params = []
         grads = []
-        grad1_grads = torch.Tensor()
+        grad1_grads = torch.Tensor().to(self.defaults['dev'])
         # We assume only one group for now
         for param in self.param_groups[0]['params']:
             if (not (param.grad is None) and not (param.grad.sum() == 0)) \
@@ -485,7 +489,8 @@ class SRCutils(Optimizer):
             if self.defaults['Hessian_approx'] == 'WoodFisher':
                 print('ssizes', grad1_grads.size(), param.grad1.size())
                 grad1_grads = torch.cat([grad1_grads,
-                                         param.grad1.view(self.defaults['sample_size_' + calculating], -1)],
+                                         param.grad1.view(self.defaults['sample_size_' + calculating], -1)
+                                        .to(self.defaults['dev'])],
                                         dim=1)
                 assert param.grad.sum() != 0
             if self.defaults['Hessian_approx'] == 'WoodFisher':
@@ -612,7 +617,8 @@ class SRCutils(Optimizer):
                 else 1 / (20 * beta)
 
             print('generating sphere random sample, dim = ', self.grad.size()[0])
-            unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))
+            unif_sphere = sigma_ * torch.squeeze(sample_spherical(1, ndim=self.grad.size()[0]))\
+                .to(self.defaults['dev'])
             # ToDo: should I use the perturbation ball?
 
             g_ = (self.grad + unif_sphere).detach()
@@ -726,21 +732,25 @@ class SRCutils(Optimizer):
 
                 if 'LIN_REG' in self.defaults['problem']:
                     self.y_onehot.zero_()
-                if 'LIN_REG' in self.defaults['problem']:
-                    self.y_onehot.scatter_(1, self.defaults['target'].view(-1, 1), 1)
+                    self.y_onehot.scatter_(1, self.defaults['target']
+                                           .view(-1, 1).to('cpu'), 1)
 
                 if not self.defaults['problem'] == 'w-function':
                     previous_f = self.loss_fn(
                         self.model(
                             self.defaults['train_data']
                         ),
-                        self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
+                        self.y_onehot.to(self.defaults['dev']) if 'LIN_REG'
+                                                                  in self.defaults['problem']
+                        else self.defaults['target']).detach()
                     self.update_params(delta)
                     current_f = self.loss_fn(
                         self.model(
                             self.defaults['train_data']
                         ),
-                        self.y_onehot if 'LIN_REG' in self.defaults['problem'] else self.defaults['target']).detach()
+                        self.y_onehot.to(self.defaults['dev']) if 'LIN_REG'
+                                                                  in self.defaults['problem']
+                        else self.defaults['target']).detach()
 
                     print('delta_m = ', self.m_delta(delta), delta.norm(p=2), (delta - delta_old).norm(p=2),
                           update.norm(p=2), self.mean_update, previous_f - current_f)
@@ -901,12 +911,14 @@ class SRCutils(Optimizer):
             if 'LIN_REG' in self.defaults['problem']:
                 self.y_onehot_hess.zero_()
             if 'LIN_REG' in self.defaults['problem']:
-                self.y_onehot_hess.scatter_(1, target.view(-1, 1), 1)
+                self.y_onehot_hess.scatter_(1, target.view(-1, 1).to('cpu'), 1)
             try:
                 autograd_hacks.clear_backprops(self.model)
             except:
                 pass
-            self.loss_fn(outputs, self.y_onehot_hess if 'LIN_REG' in self.defaults['problem'] else target) \
+            self.loss_fn(outputs, self.y_onehot_hess.to(self.defaults['dev'])
+            if 'LIN_REG' in self.defaults['problem']
+            else target) \
                 .backward(create_graph=True)
             if self.defaults['Hessian_approx'] == 'WoodFisher':
                 autograd_hacks.compute_grad1(self.model)
@@ -970,7 +982,7 @@ class SRCutils(Optimizer):
                     self.t_hess += 1
                     # Temporal & spatial averaging
                     ber = torch.distributions.bernoulli.Bernoulli(torch.tensor([0.5]))
-                    rad = (2 * ber.sample(self.grad.size()) - 1).squeeze()
+                    rad = (2 * ber.sample(self.grad.size()) - 1).squeeze().to(self.defaults['dev'])
                     D = torch.autograd.grad(gradsh, params, grad_outputs=rad,
                                             only_inputs=True, retain_graph=True)
                     D = (rad * flatten_tensor_list(D))
@@ -1013,12 +1025,12 @@ class SRCutils(Optimizer):
                         start = i * b
                         end = min((i + 1) * b, n_)
 
-                        grad_all_sample = grad_all[:, start:end]
+                        grad_all_sample = grad_all[:, start:end].to(self.defaults['dev'])
 
-                        const = torch.eye(end - start) * (shift ** -1)
+                        const = torch.eye(end - start) * (shift ** -1).to(self.defaults['dev'])
                         # if self.t_inv != 1:
                         #    const += self.accumulated_inv[i]
-                        inv = torch.inverse(num_grad * torch.eye(num_grad)
+                        inv = torch.inverse(num_grad * torch.eye(num_grad).to(self.defaults['dev'])
                                             + grad_all_sample @ const @ grad_all_sample.t())
 
                         inv = const - (const @ grad_all_sample.t() @ inv @ grad_all_sample @ const)
@@ -1044,7 +1056,8 @@ class SRCutils(Optimizer):
                     assert len(s_previous) == len(y_previous)
 
                     gamma = torch.max((y_previous @ y_previous)
-                                      / (s_previous @ y_previous), torch.tensor(self.delta))
+                                      / (s_previous @ y_previous),
+                                      torch.tensor(self.delta).to(self.defaults['dev']))
                     H_start = torch.ones_like(s_previous) * (gamma ** -1)
                     H_start_inv = H_start ** -1
                     val_1 = (H_start_inv) * s_previous @ s_previous
