@@ -487,12 +487,14 @@ class SRCutils(Optimizer):
                     and self.defaults['problem'] == 'matrix_completion':
                 continue
             if self.defaults['Hessian_approx'] == 'WoodFisher':
-                print('ssizes', grad1_grads.size(), param.grad1.size())
+                print('ssizes', param.name, grad1_grads.size(), param.grad1.size())
                 grad1_grads = torch.cat([grad1_grads,
                                          param.grad1.view(self.defaults['sample_size_' + calculating], -1)
                                         .to(self.defaults['dev'])],
                                         dim=1)
-                assert param.grad.sum() != 0
+                #assert param.grad.sum() != 0
+                if param.grad.sum() == 0:
+                    print('sum of grads is zero!')
             if self.defaults['Hessian_approx'] == 'WoodFisher':
                 assert (torch.allclose(param.grad1.mean(dim=0), param.grad, atol=1e-05))
 
@@ -822,7 +824,7 @@ class SRCutils(Optimizer):
                 print('cauchy point has been increasing too much!', self.mean_update, update_norm)
                 delta = torch.zeros(self.grad.size())
 
-        return delta, self.m_delta(delta)
+        return delta, self.m_delta(delta.to(self.defaults['dev']))
 
     def cubic_final_subsolver(self):
 
@@ -863,7 +865,7 @@ class SRCutils(Optimizer):
         return delta
 
     def model_update(self, delta):
-        self.update_params(delta)
+        self.update_params(delta.to(self.defaults['dev']))
 
     def numpy_hessian_vector_product(self, v):
         input = torch.from_numpy(v).to(torch.float32)
@@ -898,24 +900,22 @@ class SRCutils(Optimizer):
             data = data.to(self.defaults['dev'])
             target = target.to(self.defaults['dev'])
 
-        if self.first_hv:
-            self.zero_grad()
+        ##if self.first_hv:
+        self.zero_grad()
         x = self.param_groups[0]['params']
 
         if self.is_matrix_completion:
             data_ = index_to_params(data, x)
             self.loss_fn(self.model(data_), target, data_[0], data_[1]).backward(create_graph=True)
         elif self.is_classification or self.is_AE:  # and self.first_hv:
-
             outputs = self.model(data)
             if 'LIN_REG' in self.defaults['problem']:
                 self.y_onehot_hess.zero_()
-            if 'LIN_REG' in self.defaults['problem']:
                 self.y_onehot_hess.scatter_(1, target.view(-1, 1).to('cpu'), 1)
             try:
                 autograd_hacks.clear_backprops(self.model)
             except:
-                pass
+                print('did not clear backprops!')
             self.loss_fn(outputs, self.y_onehot_hess.to(self.defaults['dev'])
             if 'LIN_REG' in self.defaults['problem']
             else target) \
@@ -925,10 +925,10 @@ class SRCutils(Optimizer):
 
             # self.loss_fn(outputs, target).backward(create_graph=True)
             # self.first_hv = False
-        elif self.is_w_function and self.first_hv:
+        elif self.is_w_function:  # and self.first_hv:
             self.model(x[0]).backward(create_graph=True)
             self.perturb()
-            self.first_hv = False
+            #self.first_hv = False
 
         if self.defaults['Hessian_approx'] == 'WoodFisher':
             gradsh, params, grad_all = self.get_grads_and_params(grad1=True,
@@ -1027,7 +1027,7 @@ class SRCutils(Optimizer):
 
                         grad_all_sample = grad_all[:, start:end].to(self.defaults['dev'])
 
-                        const = torch.eye(end - start) * (shift ** -1).to(self.defaults['dev'])
+                        const = (torch.eye(end - start) * (shift ** -1)).to(self.defaults['dev'])
                         # if self.t_inv != 1:
                         #    const += self.accumulated_inv[i]
                         inv = torch.inverse(num_grad * torch.eye(num_grad).to(self.defaults['dev'])

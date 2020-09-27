@@ -20,7 +20,7 @@ do
       do
         for SubSolv in ${SUB_SOLV[@]} ;
         do
-          python3 train.py --sigma $sigma --eta $lR --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 14
+          python3 train.py --sigma $sigma --eta $lR --sample-size-hessian 10 --sample-size-gradient 100 --subproblem-solver $SubSolv --Hessian-approx $hA --delta-momentum 'False' --n-iter $nIt --epochs 3
         done
       done
     done

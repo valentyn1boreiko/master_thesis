@@ -218,7 +218,7 @@ def update_params(dct, src):
         dct[key] = value
     return dct
 
-network_to_use = 'AE_MNIST'  # AE_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
+network_to_use = 'CNN_CIFAR'  # AE_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
 # Changing activation works only for the AE
 activation = 'softplus'  # swish, softplus, relu
 
