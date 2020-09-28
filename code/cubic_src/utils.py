@@ -487,9 +487,10 @@ class SRCutils(Optimizer):
                     and self.defaults['problem'] == 'matrix_completion':
                 continue
             if self.defaults['Hessian_approx'] == 'WoodFisher':
-                print('ssizes', param.name, grad1_grads.size(), param.grad1.size())
+                print('ssizes', param.name, grad1_grads.size(), param.grad1.size(), param.grad1.size()[0])
+
                 grad1_grads = torch.cat([grad1_grads,
-                                         param.grad1.view(self.defaults['sample_size_' + calculating], -1)
+                                         param.grad1.view(param.grad1.size()[0], -1)
                                         .to(self.defaults['dev'])],
                                         dim=1)
                 #assert param.grad.sum() != 0
