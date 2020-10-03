@@ -1,0 +1,2 @@
+samples,computations,computations_times_sample,losses,val_losses,train_losses,grad_norms,least_eig,delta_m_norm
+0,0,0,0.023032983660697937,0.023220549964035105,0.02305081308600437,,,
