@@ -6,6 +6,7 @@ from torch.optim.lr_scheduler import StepLR
 import datetime
 import pandas as pd
 import os
+import glob
 import matplotlib
 from config import transforms_dict, models, criteria, weights_init, dataset, parser_benchmarks
 
@@ -31,9 +32,9 @@ def train(args, model, device, train_loader, optimizer, epoch,
         output = model(data)
         if network_to_use == 'LIN_REG_MNIST':
             y_onehot.zero_()
-            y_onehot.scatter_(1, target.view(-1, 1), 1)
+            y_onehot.scatter_(1, target.view(-1, 1).to('cpu'), 1)
 
-        loss = criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target)
+        loss = criterion(output, y_onehot.to(device) if network_to_use == 'LIN_REG_MNIST' else target)
         loss.backward()
         optimizer.step()
 
@@ -73,8 +74,8 @@ def test(model, device, test_loaders, train_loader, optimizer,
                 if is_classification:
                     if 'MNIST' in network_to_use:
                         y_onehot.zero_()
-                        y_onehot.scatter_(1, target.view(-1, 1), 1)
-                        test_loss[l_i] += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item() * n
+                        y_onehot.scatter_(1, target.view(-1, 1).to('cpu'), 1)
+                        test_loss[l_i] += criterion(output, y_onehot.to(device) if network_to_use == 'LIN_REG_MNIST' else target).item() * n
                     elif 'CIFAR' in network_to_use:
                         test_loss[l_i] += criterion(output, target).item()
                 elif is_AE:
@@ -99,9 +100,9 @@ def test(model, device, test_loaders, train_loader, optimizer,
                 if 'MNIST' in network_to_use:
                     if network_to_use == 'LIN_REG_MNIST':
                         y_onehot.zero_()
-                        y_onehot.scatter_(1, target.view(-1, 1), 1)
+                        y_onehot.scatter_(1, target.view(-1, 1).to('cpu'), 1)
 
-                    train_loss += criterion(output, y_onehot if network_to_use == 'LIN_REG_MNIST' else target).item() * n
+                    train_loss += criterion(output, y_onehot.to(device) if network_to_use == 'LIN_REG_MNIST' else target).item() * n
                 elif 'CIFAR' in network_to_use:
                     train_loss += criterion(output, target).item()
             elif is_AE:
@@ -154,8 +155,14 @@ def main():
     network_to_use = args.network_to_use
     x_axis = 'computations'  # computations, samples_seen
 
+    assert len(glob.glob('models/*10*.pt')) == 1
+    start_model_path = glob.glob('models/*10*.pt')[0]
+
     model = models[network_to_use].to(device)
-    model.apply(weights_init)
+    if start_model_path:
+        model.load_state_dict(torch.load(start_model_path))
+    else:
+        model.apply(weights_init)
 
     criterion = criteria[network_to_use]
 

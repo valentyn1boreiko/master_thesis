@@ -7,7 +7,7 @@ import pytorch_optmizers
 import torch.nn.functional as F
 from torch import nn
 import argparse
-import autograd_hacks
+import glob
 
 
 torch.manual_seed(7)
@@ -218,7 +218,7 @@ def update_params(dct, src):
         dct[key] = value
     return dct
 
-network_to_use = 'CNN_CIFAR'  # AE_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
+network_to_use = 'LIN_REG_MNIST'  # AE_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR
 # Changing activation works only for the AE
 activation = 'softplus'  # swish, softplus, relu
 
@@ -278,6 +278,9 @@ else:
 print('Using dev', dev)
 
 # Path of the checkpoint. If there is none - set to None
+
+##assert len(glob.glob('models/*10*.pt')) == 1
+##start_model_path = glob.glob('models/*10*.pt')[0]
 start_model_path = None
 
 # Choosing the model
@@ -339,7 +342,6 @@ def init_train_loader(dataloader_, train_, sampling_scheme_name='fixed_grad', n_
     return dataloader_args, train_loader
 
 # Benchmarks' only config
-
 parser_benchmarks = argparse.ArgumentParser(description='PyTorch benchmarks')
 parser_benchmarks.add_argument('--network-to-use', type=str, default='AE_MNIST',
                     # AE_MNIST, CNN_MNIST, CNN_CIFAR, LIN_REG_MNIST, ResNet_18_CIFAR

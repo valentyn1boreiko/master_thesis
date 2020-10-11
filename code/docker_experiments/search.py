@@ -4,7 +4,7 @@ import numpy as np
 from shutil import copy
 import pprint
 
-path = 'resnet_src'
+path = 'cnn_src'
 criterion = 'train_losses'
 
 terms = ['AdaHess_Solver=adaptive', 'AdaHess_Solver=Linear_system',

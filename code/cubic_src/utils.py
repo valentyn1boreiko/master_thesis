@@ -375,6 +375,11 @@ class SRCutils(Optimizer):
                 self.first_entry = False
             print('idx ', batch_idx, self.test_losses, self.samples_seen)
 
+        print('To save: ', self.defaults['save_model'], epoch + 1, self.defaults['save_model'] and epoch + 1 % 2 == 0)
+        if self.defaults['save_model'] and (epoch + 1) % 2 == 0:
+            print('Saving model')
+            torch.save(self.model.state_dict(), "models/_" + self.f_name + "_" + str(epoch) + ".pt")
+
     def cauchy_point(self):
         # Compute Cauchy radius
         # ToDo: replace hessian-vec product with the upper bound (beta)

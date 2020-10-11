@@ -10,7 +10,7 @@ dfs = {}
 for file in files:
     split_ = file.split("_")
     label = "{}".format(split_[3]) \
-        if 'SRC' not in file else split_[2]
+        if 'SRC' not in file else 'SCR'
     dfs[label] = pd.read_csv(file)
 
 for label, df in dfs.items():

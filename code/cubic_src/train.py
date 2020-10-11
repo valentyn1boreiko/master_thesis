@@ -2,6 +2,7 @@ import copy
 from torch.autograd import Variable
 import gc
 from config import *
+import autograd_hacks
 
 parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
 #torch.manual_seed(7)
@@ -40,6 +41,8 @@ parser.add_argument('--epochs', type=int, default=14, metavar='N',
                     help='number of epochs to train (default: 14)')
 parser.add_argument('--n-iter', type=int, default=4, metavar='N',
                     help='number of iterations of the subsolver (default: 4)')
+parser.add_argument('--save-model', action='store_true', default=False,
+                    help='For Saving the current Model')
 
 args = parser.parse_args()
 
@@ -119,6 +122,10 @@ def main():
         y_onehot = torch.FloatTensor(int(optimizer.defaults['sample_size_gradient']), n_digits)
     if args.Hessian_approx == 'WoodFisher':
         autograd_hacks.add_hooks(optimizer.model)
+    if optimizer.defaults['save_model']:
+        print('Checkpoints will be created every 10 epochs.')
+    else:
+        print('Checkpoints will not be created.')
 
     for epoch in range(args.epochs):
         # Set modules in the the network to train mode
@@ -166,7 +173,6 @@ def main():
 
             optimizer.step()
             gc.collect()
-
 
 
 if __name__ == '__main__':
