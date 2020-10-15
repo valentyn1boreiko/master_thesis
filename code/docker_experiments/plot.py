@@ -27,5 +27,5 @@ for path in paths:
     plt.title(path)
     plt.xlabel('Oracle calls')
     plt.ylabel('Training Loss')
-    plt.savefig(path + '/final.png', bbox_inches="tight")
+    plt.savefig(path + '/resnet_CIFAR_hsize.png', bbox_inches="tight")
     plt.clf()

@@ -24,7 +24,7 @@ plt.legend(bbox_to_anchor=(1.04, 1), loc='upper left')
 plt.title('CNN with CIFAR-10 dataset')
 plt.xlabel('Oracle calls')
 plt.ylabel('Training Loss')
-plt.savefig('cnn_CIFAR.png', bbox_inches="tight")
+plt.savefig('cnn_CIFAR_decreased.png', bbox_inches="tight")
 
 '''
 SGD = pd.read_csv('../w-function/computations_momentum_loss_SGD(old)_non-convex_300_300_0.01_0.0_1.csv')
