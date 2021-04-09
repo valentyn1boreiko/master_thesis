@@ -106,19 +106,35 @@ class AE_MNIST(nn.Module):
             nn.Softplus(),
             nn.Linear(512, 28 * 28),
             nn.Sigmoid())
+        
+        # Xavier uniform
+        for i, m in enumerate(self.modules()):
+            if hasattr(m, 'weight'):
+                try:
+                    # Xavier uniform, zeros for bias
+                    if m.bias is not None:
+                        # Should it be uniform or zero?
+                        nn.init.zeros_(m.bias)
+                    else:
+                        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(m.weight)
+                        bound = math.sqrt(6 / (fan_in + fan_out))
+                        nn.init.uniform_(m.weight, -bound, bound)
+                    print(i, 'success')
+                except Exception as e:
+                    print(i, str(e))
 
     def forward(self, x):
         x = self.encoder(x)
         x = self.decoder(x)
         return x
 
-    def reset_parameters(self):
-        #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)
-        bound = math.sqrt(6 / (fan_in + fan_out))
-        if self.bias is not None:
-            nn.init.uniform_(self.bias, -bound, bound)
-        nn.init.uniform_(self.weight, -bound, bound)
+    #def reset_parameters(self):
+    #    #nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+    #    fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)
+    #    bound = math.sqrt(6 / (fan_in + fan_out))
+    #    if self.bias is not None:
+    #        nn.init.uniform_(self.bias, -bound, bound)
+    #    nn.init.uniform_(self.weight, -bound, bound)
 
 def to_img(x):
     #x = 0.5 * (x + 1)
